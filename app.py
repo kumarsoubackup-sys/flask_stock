@@ -796,6 +796,218 @@ def get_pivot(ticker):
 
 
 # ═══════════════════════════════════════════════════════════
+# RENKO ENGINE
+# ═══════════════════════════════════════════════════════════
+
+# Default Renko params (overridable via query string)
+IS_ATR    = True
+ATR_LEN   = 14
+TRAD_LEN  = 1.0
+SHOW_BRICKS = True
+SHOW_TREND  = True
+
+
+def compute_atr(df: pd.DataFrame, period: int) -> pd.Series:
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low  - prev_close).abs()
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / period, adjust=False).mean()
+
+
+def compute_renko(df: pd.DataFrame,
+                  use_atr: bool = True,
+                  atr_len: int = 14,
+                  fixed_brick: float = 1.0) -> pd.DataFrame:
+    closes = df["close"].values
+    n = len(closes)
+    brick_sizes = compute_atr(df, atr_len).values if use_atr else np.full(n, fixed_brick)
+
+    renko_close = np.full(n, np.nan)
+    renko_trend = np.zeros(n, dtype=int)
+    rc = float(closes[0]); rt = 0
+
+    for i in range(n):
+        brick = brick_sizes[i]
+        if np.isnan(brick) or brick <= 0:
+            renko_close[i] = rc; renko_trend[i] = rt; continue
+        price_move = closes[i] - rc
+        if price_move >= brick:
+            bricks = int(price_move / brick); rc += bricks * brick; rt = 1
+        elif price_move <= -brick:
+            bricks = int(abs(price_move) / brick); rc -= bricks * brick; rt = -1
+        renko_close[i] = rc; renko_trend[i] = rt
+
+    result = df.copy()
+    result["brick_size"]  = brick_sizes
+    result["renko_close"] = renko_close
+    result["renko_trend"] = renko_trend
+    return result
+
+
+def check_renko_alerts(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    prev = df["renko_trend"].shift(1)
+    df["alert_up"]   = (df["renko_trend"] ==  1) & (prev != 1)
+    df["alert_down"] = (df["renko_trend"] == -1) & (prev != -1)
+    df["alert_buy"]  = (df["renko_trend"] == 1) & \
+                       (df["renko_trend"].shift(1) == 1) & \
+                       (df["renko_trend"].shift(2) == 1) & \
+                       (df["renko_trend"].shift(3) != 1)
+    df["alert_sell"] = (df["renko_trend"] == -1) & \
+                       (df["renko_trend"].shift(1) == -1) & \
+                       (df["renko_trend"].shift(2) == -1) & \
+                       (df["renko_trend"].shift(3) != -1)
+    return df
+
+
+def generate_renko_chart(df: pd.DataFrame, ticker: str,
+                         use_atr: bool = True, atr_len: int = 14,
+                         fixed_brick: float = 1.0, max_bars: int = 300) -> io.BytesIO:
+    """Compute Renko and return a 3-panel dark PNG."""
+    result = compute_renko(df, use_atr=use_atr, atr_len=atr_len, fixed_brick=fixed_brick)
+    result = check_renko_alerts(result)
+
+    df_plot = result.tail(max_bars).copy()
+    df_plot["original_datetime"] = df_plot.index
+    df_plot = df_plot.reset_index(drop=True)
+
+    color_map = {1: "lime", -1: "red", 0: "gray"}
+    colors = df_plot["renko_trend"].map(color_map).fillna("gray")
+
+    fig, axes = plt.subplots(3, 1, figsize=(16, 9),
+                             gridspec_kw={"height_ratios": [3, 1, 1]},
+                             sharex=True)
+    fig.patch.set_facecolor("#131722")
+    for ax in axes:
+        ax.set_facecolor("#131722")
+        ax.tick_params(colors="white")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#444")
+
+    ax1 = axes[0]
+
+    # Price line (faint)
+    ax1.plot(df_plot["close"].values, color="#888888", linewidth=0.8, alpha=0.5, label="Price")
+
+    # Renko close line + dots
+    for i in range(1, len(df_plot)):
+        ax1.plot([i-1, i],
+                 [df_plot["renko_close"].iloc[i-1], df_plot["renko_close"].iloc[i]],
+                 color=colors.iloc[i], linewidth=2.5)
+    ax1.scatter(range(len(df_plot)), df_plot["renko_close"], c=colors, s=15, zorder=4)
+
+    # Alert markers
+    up_bars      = df_plot[df_plot["alert_up"]]
+    down_bars    = df_plot[df_plot["alert_down"]]
+    buy_signals  = df_plot[df_plot["alert_buy"]]
+    sell_signals = df_plot[df_plot["alert_sell"]]
+
+    ax1.scatter(up_bars.index, up_bars["renko_close"],
+                marker="^", color="lime", s=80, zorder=5)
+    for i, row in up_bars.iterrows():
+        ax1.annotate(f"{row['original_datetime'].strftime('%H:%M')} ({row['renko_close']:.2f})",
+                     (i, row["renko_close"]), textcoords="offset points", xytext=(5, 5),
+                     ha="left", va="bottom", fontsize=7, color="white")
+
+    ax1.scatter(down_bars.index, down_bars["renko_close"],
+                marker="v", color="red", s=80, zorder=5)
+    for i, row in down_bars.iterrows():
+        ax1.annotate(f"{row['original_datetime'].strftime('%H:%M')} ({row['renko_close']:.2f})",
+                     (i, row["renko_close"]), textcoords="offset points", xytext=(5, -10),
+                     ha="left", va="top", fontsize=7, color="white")
+
+    ax1.scatter(buy_signals.index, buy_signals["renko_close"],
+                marker="P", color="cyan", s=100, zorder=6)
+    for i, row in buy_signals.iterrows():
+        ax1.annotate(f"BUY {row['original_datetime'].strftime('%H:%M')} ({row['renko_close']:.2f})",
+                     (i, row["renko_close"]), textcoords="offset points", xytext=(10, 15),
+                     ha="left", va="bottom", fontsize=8, color="cyan",
+                     bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="cyan", lw=0.5, alpha=0.7))
+
+    ax1.scatter(sell_signals.index, sell_signals["renko_close"],
+                marker="X", color="magenta", s=100, zorder=6)
+    for i, row in sell_signals.iterrows():
+        ax1.annotate(f"SELL {row['original_datetime'].strftime('%H:%M')} ({row['renko_close']:.2f})",
+                     (i, row["renko_close"]), textcoords="offset points", xytext=(10, -20),
+                     ha="left", va="top", fontsize=8, color="magenta",
+                     bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="magenta", lw=0.5, alpha=0.7))
+
+    ax1.set_ylabel("Price", color="white")
+    brick_label = f"ATR-{atr_len}" if use_atr else f"Fixed-{fixed_brick}"
+    ax1.set_title(f"Non-Repaintable Renko  ·  {ticker}  ·  {brick_label}",
+                  color="white", fontsize=12)
+    legend_patches = [
+        mpatches.Patch(color="lime",    label="Up"),
+        mpatches.Patch(color="red",     label="Down"),
+        mpatches.Patch(color="gray",    label="Neutral"),
+        mpatches.Patch(color="cyan",    label="BUY (3+ Green)"),
+        mpatches.Patch(color="magenta", label="SELL (3+ Red)"),
+    ]
+    ax1.legend(handles=legend_patches, facecolor="#1e222d",
+               labelcolor="white", fontsize=8, loc="upper left")
+
+    # Brick size panel
+    ax2 = axes[1]
+    ax2.plot(df_plot["brick_size"].values, color="#f0a500", linewidth=1.2)
+    ax2.set_ylabel("Brick Sz", color="white", fontsize=8)
+    ax2.yaxis.set_tick_params(labelcolor="white")
+
+    # Trend bar panel
+    ax3 = axes[2]
+    trend_colors = [color_map.get(t, "gray") for t in df_plot["renko_trend"]]
+    ax3.bar(range(len(df_plot)), df_plot["renko_trend"], color=trend_colors, width=1)
+    ax3.axhline(0, color="white", linewidth=0.4)
+    ax3.set_yticks([-1, 0, 1])
+    ax3.set_yticklabels(["DN", "—", "UP"], color="white", fontsize=7)
+    ax3.set_ylabel("Trend", color="white", fontsize=8)
+    axes[-1].set_xlabel("Bar Index", color="white")
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="#131722")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+@app.route("/renko/<ticker>")
+def get_renko(ticker):
+    """
+    Renko chart PNG.
+    Params:
+      range     : 1d 5d 1mo 3mo …  (default 1d)
+      interval  : 1m 5m 15m 1d …  (default 1m)
+      atr       : true/false        (default true)
+      atr_len   : int               (default 14)
+      brick     : float             (default 1.0, used if atr=false)
+      max_bars  : int               (default 300)
+    """
+    try:
+        range_    = request.args.get("range",    "1d")
+        interval  = request.args.get("interval", "1m")
+        use_atr   = request.args.get("atr",      "true").lower() == "true"
+        atr_len   = int(request.args.get("atr_len", 14))
+        fixed_brick = float(request.args.get("brick", 1.0))
+        max_bars  = int(request.args.get("max_bars", 300))
+
+        raw_df = fetch_ohlcv(ticker, interval=interval, range_=range_)
+        buf    = generate_renko_chart(raw_df, ticker.upper(),
+                                      use_atr=use_atr, atr_len=atr_len,
+                                      fixed_brick=fixed_brick, max_bars=max_bars)
+        return send_file(buf, mimetype="image/png",
+                         download_name=f"{ticker.upper()}_renko.png")
+
+    except req_lib.HTTPError as e:
+        return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════
 # RUN
 # ═══════════════════════════════════════════════════════════
 
