@@ -319,10 +319,10 @@
         <div class="controls-row">
           <span class="controls-label" style="color:#d2a8ff">🧱 Renko</span>
           <div class="pill-group" id="renkoBrickPills">
-            <button class="pill active" data-atr="true"  data-len="14"  onclick="setRenko(this)">ATR-14</button>
-            <button class="pill"        data-atr="true"  data-len="20"  onclick="setRenko(this)">ATR-20</button>
-            <button class="pill"        data-atr="false" data-brick="0.5" onclick="setRenko(this)">Fixed 0.5</button>
-            <button class="pill"        data-atr="false" data-brick="1"   onclick="setRenko(this)">Fixed 1</button>
+            <button class="pill active" data-atr="true"  data-len="20"   onclick="setRenko(this)">ATR-20</button>
+            <button class="pill"        data-atr="true"  data-len="14"   onclick="setRenko(this)">ATR-14</button>
+            <button class="pill"        data-atr="false" data-brick="500"  onclick="setRenko(this)">Fixed 500</button>
+            <button class="pill"        data-atr="false" data-brick="1000" onclick="setRenko(this)">Fixed 1000</button>
           </div>
           <span class="controls-label" style="margin-left:12px">Max Bars</span>
           <div class="pill-group" id="renkoBarsPills">
@@ -373,8 +373,8 @@ let activeTab = "chart";
 
 // Renko state
 let renkoAtr   = true;
-let renkoAtrLen= 14;
-let renkoBrick = 1.0;
+let renkoAtrLen= 20;
+let renkoBrick = 1000.0;
 let renkoMaxBars = 300;
 
 // Populate dropdown
@@ -573,7 +573,7 @@ function loadRenko(ticker) {
       img.onload=()=>{
         over.classList.remove("visible");
         setDot("dot_renko","ok");
-        const brickLabel = renkoAtr ? `ATR-${renkoAtrLen}` : `Fixed-${renkoBrick}`;
+        const brickLabel = renkoAtr ? `ATR-${renkoAtrLen}` : `Fixed-${(renkoBrick*0.001).toFixed(4)}`;
         document.getElementById("renkoMeta").textContent=
           `${ticker}  ·  ${brickLabel}  ·  max ${renkoMaxBars} bars`;
         const dl=document.getElementById("dlRenko");
