@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NSE Screener</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#0d1117; --surface:#161b22; --border:#21262d;
+      --accent:#58a6ff; --green:#26a641; --red:#f85149;
+      --gold:#ffa657; --purple:#d2a8ff; --text:#c9d1d9; --muted:#6e7681; --radius:10px;
+    }
+    html,body { height:100%; background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace; font-size:13px; }
+    header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:18px 28px; border-bottom:1px solid var(--border);
+      background:var(--surface); position:sticky; top:0; z-index:100;
+    }
+    .logo { font-family:'Syne',sans-serif; font-weight:800; font-size:20px; letter-spacing:-0.5px; color:#fff; }
+    .logo span { color:var(--accent); }
+    .header-right { display:flex; align-items:center; gap:14px; }
+    .select-wrapper { position:relative; }
+    .select-wrapper::after { content:'▾'; position:absolute; right:12px; top:50%; transform:translateY(-50%); color:var(--accent); pointer-events:none; font-size:11px; }
+    select#tickerSelect {
+      appearance:none; background:var(--bg); border:1px solid var(--border);
+      color:var(--text); font-family:'JetBrains Mono',monospace; font-size:13px;
+      padding:8px 36px 8px 14px; border-radius:var(--radius); cursor:pointer;
+      transition:border-color 0.2s; min-width:200px;
+    }
+    select#tickerSelect:focus { outline:none; border-color:var(--accent); }
+    select#tickerSelect option { background:var(--surface); }
+    .btn {
+      display:inline-flex; align-items:center; gap:6px; padding:8px 16px;
+      border-radius:var(--radius); border:1px solid var(--border); background:var(--surface);
+      color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px;
+      cursor:pointer; transition:all 0.2s; white-space:nowrap;
+    }
+    .btn:hover { border-color:var(--accent); color:var(--accent); }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:#000; font-weight:600; }
+    .btn.primary:hover { background:#79c0ff; }
+    .pill-group { display:flex; gap:4px; }
+    .pill {
+      padding:5px 11px; border-radius:20px; border:1px solid var(--border);
+      background:transparent; color:var(--muted); font-family:'JetBrains Mono',monospace;
+      font-size:11px; cursor:pointer; transition:all 0.15s;
+    }
+    .pill:hover { border-color:var(--accent); color:var(--accent); }
+    .pill.active { background:var(--accent); border-color:var(--accent); color:#000; font-weight:600; }
+    #statusBar {
+      display:flex; align-items:center; gap:10px; padding:8px 28px;
+      background:var(--surface); border-bottom:1px solid var(--border); font-size:11px; color:var(--muted);
+    }
+    #statusDot { width:7px; height:7px; border-radius:50%; background:var(--muted); transition:background 0.3s; }
+    #statusDot.loading { background:var(--gold); animation:pulse 0.8s infinite; }
+    #statusDot.ok { background:var(--green); }
+    #statusDot.error { background:var(--red); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    main { display:grid; grid-template-columns:300px 1fr; height:calc(100vh - 101px); }
+    aside { border-right:1px solid var(--border); overflow-y:auto; background:var(--surface); }
+    .sidebar-section { padding:16px; border-bottom:1px solid var(--border); }
+    .sidebar-title { font-family:'Syne',sans-serif; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin-bottom:12px; }
+    .summary-grid { display:flex; flex-direction:column; gap:6px; }
+    .summary-row { display:flex; justify-content:space-between; align-items:center; padding:5px 8px; border-radius:6px; background:var(--bg); gap:8px; }
+    .summary-key { color:var(--muted); font-size:10px; white-space:nowrap; }
+    .summary-val { font-weight:600; font-size:11px; text-align:right; color:var(--text); }
+    .summary-val.up { color:var(--green); }
+    .summary-val.down { color:var(--red); }
+    .summary-val.bool-true { color:var(--green); }
+    .summary-val.bool-false { color:var(--muted); }
+    .summary-val.accent { color:var(--accent); }
+    .signal-chip {
+      display:inline-flex; align-items:center; gap:5px; padding:4px 10px;
+      border-radius:20px; font-size:10px; font-weight:600; margin:2px; border:1px solid transparent;
+    }
+    .signal-chip.active-green { background:rgba(38,166,65,.18); border-color:var(--green); color:var(--green); }
+    .signal-chip.active-red   { background:rgba(248,81,73,.18); border-color:var(--red); color:var(--red); }
+    .signal-chip.inactive     { background:rgba(110,118,129,.08); border-color:var(--border); color:var(--muted); }
+    .content-area { display:flex; flex-direction:column; overflow:hidden; }
+    .controls-row { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+    .controls-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
+    .chart-container { flex:1; position:relative; overflow:hidden; }
+    #chartImg { width:100%; height:100%; object-fit:contain; object-position:center top; display:block; transition:opacity 0.3s; }
+    #chartImg.loading { opacity:0.3; }
+    #loadingOverlay {
+      position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+      flex-direction:column; gap:14px; background:rgba(13,17,23,0.75); backdrop-filter:blur(4px); z-index:10;
+    }
+    #loadingOverlay.visible { display:flex; }
+    .spinner { width:36px; height:36px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .loading-text { font-family:'Syne',sans-serif; font-size:13px; color:var(--accent); }
+    #errorBox { display:none; position:absolute; inset:0; align-items:center; justify-content:center; flex-direction:column; gap:10px; background:var(--bg); z-index:9; }
+    #errorBox.visible { display:flex; }
+    .error-icon { font-size:36px; }
+    .error-msg { color:var(--red); font-size:13px; text-align:center; max-width:400px; }
+    .toggle-wrap { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+    .toggle { width:34px; height:18px; background:var(--border); border-radius:9px; position:relative; transition:background 0.2s; }
+    .toggle::after { content:''; position:absolute; width:12px; height:12px; background:#fff; border-radius:50%; top:3px; left:3px; transition:left 0.2s; }
+    .toggle.on { background:var(--green); }
+    .toggle.on::after { left:19px; }
+    #countdown { font-size:11px; color:var(--gold); min-width:50px; }
+    ::-webkit-scrollbar { width:5px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">NSE<span>·</span>Screener</div>
+  <div class="header-right">
+    <div class="select-wrapper">
+      <select id="tickerSelect"></select>
+    </div>
+    <button class="btn primary" onclick="loadAll()">▶ Load</button>
+    <a id="downloadLink" class="btn" style="display:none" download>↓ PNG</a>
+  </div>
+</header>
+
+<div id="statusBar">
+  <div id="statusDot"></div>
+  <span id="statusText">Select a ticker and click Load</span>
+  <span style="margin-left:auto;color:var(--muted)" id="lastUpdated"></span>
+</div>
+
+<main>
+  <aside>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Price & VWAP</div>
+      <div class="summary-grid">
+        <div class="summary-row"><span class="summary-key">Close</span><span class="summary-val" id="s_close">—</span></div>
+        <div class="summary-row"><span class="summary-key">VWAP</span><span class="summary-val accent" id="s_vwap">—</span></div>
+        <div class="summary-row"><span class="summary-key">VWAP Dev %</span><span class="summary-val" id="s_vwap_dev">—</span></div>
+        <div class="summary-row"><span class="summary-key">Gravity (CoG)</span><span class="summary-val" id="s_gravity">—</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">ORB Levels</div>
+      <div class="summary-grid">
+        <div class="summary-row"><span class="summary-key">ORB 0% (High)</span><span class="summary-val up" id="s_fib0">—</span></div>
+        <div class="summary-row"><span class="summary-key">ORB 50% (Mid)</span><span class="summary-val accent" id="s_fib50">—</span></div>
+        <div class="summary-row"><span class="summary-key">ORB 100% (Low)</span><span class="summary-val down" id="s_fib100">—</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Daily Stats</div>
+      <div class="summary-grid">
+        <div class="summary-row"><span class="summary-key">Higher Highs</span><span class="summary-val" id="s_hh">—</span></div>
+        <div class="summary-row"><span class="summary-key">Lower Lows</span><span class="summary-val" id="s_ll">—</span></div>
+        <div class="summary-row"><span class="summary-key">H-L Range</span><span class="summary-val" id="s_hl">—</span></div>
+        <div class="summary-row"><span class="summary-key">Cum. Volume</span><span class="summary-val" id="s_vol">—</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Zone Bar Counts</div>
+      <div class="summary-grid">
+        <div class="summary-row"><span class="summary-key">Above L1</span><span class="summary-val up" id="s_z1">—</span></div>
+        <div class="summary-row"><span class="summary-key">L1 → L2</span><span class="summary-val accent" id="s_z2">—</span></div>
+        <div class="summary-row"><span class="summary-key">L2 → L3</span><span class="summary-val" id="s_z3">—</span></div>
+        <div class="summary-row"><span class="summary-key">Below L3</span><span class="summary-val down" id="s_z4">—</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Donchian Trend</div>
+      <div class="summary-grid">
+        <div class="summary-row"><span class="summary-key">Main Trend</span><span class="summary-val" id="s_don">—</span></div>
+        <div class="summary-row"><span class="summary-key">All Green</span><span class="summary-val" id="s_allgreen">—</span></div>
+        <div class="summary-row"><span class="summary-key">All Red</span><span class="summary-val" id="s_allred">—</span></div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Signals</div>
+      <div id="signalChips" style="padding:4px 0;display:flex;flex-wrap:wrap;"></div>
+    </div>
+  </aside>
+
+  <div class="content-area">
+    <div class="controls-row">
+      <span class="controls-label">Range</span>
+      <div class="pill-group" id="rangePills">
+        <button class="pill active" data-val="1d">1D</button>
+        <button class="pill" data-val="5d">5D</button>
+        <button class="pill" data-val="1mo">1M</button>
+        <button class="pill" data-val="3mo">3M</button>
+      </div>
+      <span class="controls-label" style="margin-left:8px">Interval</span>
+      <div class="pill-group" id="intervalPills">
+        <button class="pill active" data-val="1m">1m</button>
+        <button class="pill" data-val="5m">5m</button>
+        <button class="pill" data-val="15m">15m</button>
+        <button class="pill" data-val="1d">1d</button>
+      </div>
+      <div class="toggle-wrap" style="margin-left:auto" onclick="toggleAutoRefresh()">
+        <div class="toggle" id="autoToggle"></div>
+        <span class="controls-label">Auto-refresh</span>
+      </div>
+      <span id="countdown"></span>
+    </div>
+    <div class="chart-container">
+      <div id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loadingTicker">Loading…</div>
+      </div>
+      <div id="errorBox">
+        <div class="error-icon">⚠</div>
+        <div class="error-msg" id="errorMsg">Something went wrong.</div>
+      </div>
+      <img id="chartImg" src="" alt="chart"/>
+    </div>
+  </div>
+</main>
+
+<script>
+const SYMBOLS = [
+  "ATGL.NS","NYKAA.NS","DMART.NS","BANKBARODA.NS","PGHH.NS","LTIM.NS","HDFCAMC.NS",
+  "BANDHANBNK.NS","VEDL.NS","ADANIGREEN.NS","AMBUJACEM.NS","PIDILITIND.NS","ICICIGI.NS",
+  "ICICIPRULI.NS","INDIGO.NS","GAIL.NS","IOC.NS","MOTHERSON.NS","GLAND.NS","BAJAJHLDNG.NS",
+  "GODREJCP.NS","DLF.NS","MARICO.NS","NAUKRI.NS","ACC.NS","HAVELLS.NS","HAL.NS","MPHASIS.NS",
+  "LICI.NS","TORNTPHARM.NS","BEL.NS","PIIND.NS","IRCTC.NS","COLPAL.NS","INDUSTOWER.NS",
+  "SBICARD.NS","BIOCON.NS","BERGEPAINT.NS","TATAPOWER.NS","SIEMENS.NS","BOSCHLTD.NS",
+  "CHOLAFIN.NS","SRF.NS","DABUR.NS","PAYTM.NS","MUTHOOTFIN.NS","BHARTIARTL.NS","EICHERMOT.NS",
+  "SBIN.NS","AXISBANK.NS","TATASTEEL.NS","SBILIFE.NS","ADANIPORTS.NS","HINDALCO.NS",
+  "JSWSTEEL.NS","ONGC.NS","ICICIBANK.NS","BPCL.NS","INDUSINDBK.NS","HCLTECH.NS",
+  "SUNPHARMA.NS","WIPRO.NS","HEROMOTOCO.NS","M&M.NS","INFY.NS","BAJFINANCE.NS","ADANIENT.NS",
+  "GRASIM.NS","TCS.NS","HDFCLIFE.NS","ITC.NS","MARUTI.NS","UPL.NS","DRREDDY.NS","NTPC.NS",
+  "RELIANCE.NS","CIPLA.NS","KOTAKBANK.NS","BAJAJFINSV.NS","HINDUNILVR.NS","ASIANPAINT.NS",
+  "TECHM.NS","NESTLEIND.NS","POWERGRID.NS","LT.NS","BAJAJ-AUTO.NS","BRITANNIA.NS",
+  "TATACONSUM.NS","COALINDIA.NS","ULTRACEMCO.NS","DIVISLAB.NS","TITAN.NS","APOLLOHOSP.NS"
+];
+
+let autoRefresh = false, countdownVal = 60, countdownTimer = null;
+let currentRange = "1d", currentInterval = "1m";
+
+// Populate dropdown
+const sel = document.getElementById("tickerSelect");
+SYMBOLS.forEach(sym => {
+  const opt = document.createElement("option");
+  opt.value = sym;
+  opt.textContent = sym.replace(".NS","");
+  if (sym === "ITC.NS") opt.selected = true;
+  sel.appendChild(opt);
+});
+sel.addEventListener("change", loadAll);
+
+// Pills
+document.querySelectorAll("#rangePills .pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#rangePills .pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentRange = btn.dataset.val;
+    loadAll();
+  });
+});
+document.querySelectorAll("#intervalPills .pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#intervalPills .pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentInterval = btn.dataset.val;
+    loadAll();
+  });
+});
+
+function setStatus(state, msg) {
+  document.getElementById("statusDot").className = state;
+  document.getElementById("statusText").textContent = msg;
+}
+
+function loadChart(ticker) {
+  const img = document.getElementById("chartImg");
+  const overlay = document.getElementById("loadingOverlay");
+  const errorBox = document.getElementById("errorBox");
+  overlay.classList.add("visible");
+  errorBox.classList.remove("visible");
+  img.classList.add("loading");
+  document.getElementById("loadingTicker").textContent = `Loading ${ticker}…`;
+
+  fetch(`/chart/${ticker}?range=${currentRange}&interval=${currentInterval}&t=${Date.now()}`)
+    .then(res => {
+      if (!res.ok) return res.json().then(d => { throw new Error(d.error || res.statusText); });
+      return res.blob();
+    })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        overlay.classList.remove("visible");
+        img.classList.remove("loading");
+        const dl = document.getElementById("downloadLink");
+        dl.href = url; dl.download = `${ticker}_chart.png`; dl.style.display = "inline-flex";
+      };
+      img.src = url;
+      document.getElementById("lastUpdated").textContent =
+        "Updated " + new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+      setStatus("ok", `Loaded ${ticker}`);
+    })
+    .catch(err => {
+      overlay.classList.remove("visible");
+      img.classList.remove("loading");
+      errorBox.classList.add("visible");
+      document.getElementById("errorMsg").textContent = err.message;
+      setStatus("error", err.message);
+    });
+}
+
+function loadScreener(ticker) {
+  fetch(`/screener/${ticker}?range=${currentRange}&interval=${currentInterval}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) return;
+      const s = data.summary;
+      const set = (id, val, cls) => {
+        const el = document.getElementById(id); if (!el) return;
+        el.textContent = val ?? "—";
+        if (cls) el.className = "summary-val " + cls;
+      };
+      set("s_close",   s.close?.toFixed(2));
+      set("s_vwap",    s.vwap?.toFixed(2), "accent");
+      const dev = s.vwap_dev_pct;
+      set("s_vwap_dev", dev != null ? (dev>0?"+":"")+dev.toFixed(3)+"%" : "—", dev>0?"up":dev<0?"down":"");
+      set("s_gravity", s.gravity?.toFixed(2));
+      set("s_fib0",    s.fib0?.toFixed(2),   "up");
+      set("s_fib50",   s.fib50?.toFixed(2),  "accent");
+      set("s_fib100",  s.fib100?.toFixed(2), "down");
+      set("s_hh", s.hh_daily, s.hh_daily > s.ll_daily ? "up" : "");
+      set("s_ll", s.ll_daily, s.ll_daily > s.hh_daily ? "down" : "");
+      set("s_hl",  s.daily_hl_diff?.toFixed(2));
+      set("s_vol", s.daily_vol);
+      set("s_z1",  s.zone_above_l1, "up");
+      set("s_z2",  s.zone_l1_l2,    "accent");
+      set("s_z3",  s.zone_l2_l3);
+      set("s_z4",  s.zone_below_l3, "down");
+      const don = s.don_main;
+      set("s_don", don>0?"▲ Bullish":don<0?"▼ Bearish":"→ Neutral", don>0?"up":don<0?"down":"");
+      set("s_allgreen", s.all_green?"✔ Yes":"No", s.all_green?"bool-true":"bool-false");
+      set("s_allred",   s.all_red  ?"✔ Yes":"No", s.all_red  ?"bool-true":"bool-false");
+
+      const signals = [
+        {key:"signal_red_to_green",label:"R→G Flip",     bull:true},
+        {key:"signal_green_to_red",label:"G→R Flip",     bull:false},
+        {key:"basic_rise",         label:"Basic Rise",   bull:true},
+        {key:"confirmed_rise",     label:"Confirmed",    bull:true},
+        {key:"explosive_rise",     label:"Explosive",    bull:true},
+        {key:"parabolic_rise",     label:"Parabolic",    bull:true},
+        {key:"major_fall",         label:"Major Fall",   bull:false},
+        {key:"escape",             label:"Escape Mode",  bull:true},
+        {key:"crash_risk",         label:"Crash Risk",   bull:false},
+      ];
+      const chips = document.getElementById("signalChips");
+      chips.innerHTML = "";
+      signals.forEach(sig => {
+        const active = s[sig.key];
+        const chip = document.createElement("div");
+        chip.className = "signal-chip " + (active ? (sig.bull?"active-green":"active-red") : "inactive");
+        chip.innerHTML = `<span>${active?(sig.bull?"▲":"▼"):"·"}</span> ${sig.label}`;
+        chips.appendChild(chip);
+      });
+    }).catch(()=>{});
+}
+
+function loadAll() {
+  const ticker = sel.value;
+  document.title = `${ticker.replace(".NS","")} · NSE Screener`;
+  setStatus("loading", `Fetching ${ticker}…`);
+  loadChart(ticker);
+  loadScreener(ticker);
+  if (autoRefresh) resetCountdown();
+}
+
+function toggleAutoRefresh() {
+  autoRefresh = !autoRefresh;
+  document.getElementById("autoToggle").classList.toggle("on", autoRefresh);
+  autoRefresh ? resetCountdown() : (clearInterval(countdownTimer), document.getElementById("countdown").textContent="");
+}
+
+function resetCountdown() {
+  clearInterval(countdownTimer);
+  countdownVal = 60;
+  document.getElementById("countdown").textContent = `↻ ${countdownVal}s`;
+  countdownTimer = setInterval(() => {
+    countdownVal--;
+    document.getElementById("countdown").textContent = `↻ ${countdownVal}s`;
+    if (countdownVal <= 0) { loadAll(); }
+  }, 1000);
+}
+
+loadAll();
+</script>
+</body>
+</html>

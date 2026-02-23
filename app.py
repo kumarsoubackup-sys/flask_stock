@@ -10,7 +10,7 @@ import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 from matplotlib.gridspec import GridSpec
 from datetime import datetime, time as dtime, timezone, timedelta
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, render_template
 import requests as req_lib
 
 warnings.filterwarnings("ignore")
@@ -597,15 +597,7 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
 
 @app.route("/")
 def home():
-    return jsonify({
-        "message": "📈 NSE Screener API",
-        "endpoints": {
-            "GET /history/<ticker>": "Raw OHLCV data  ?range=1mo&interval=1d",
-            "GET /screener/<ticker>":"Run all indicators + summary JSON  ?range=1d&interval=1m",
-            "GET /chart/<ticker>":   "4-panel PNG chart  ?range=1d&interval=1m",
-        },
-        "example_ticker": "ITC.NS",
-    })
+    return render_template("index.html")
 
 
 @app.route("/history/<ticker>")
