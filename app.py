@@ -1016,6 +1016,215 @@ def get_renko(ticker):
 
 
 # ═══════════════════════════════════════════════════════════
+# ROLLING TRENDLINE SLOPES
+# ═══════════════════════════════════════════════════════════
+
+from scipy.optimize import linprog
+from matplotlib.lines import Line2D
+
+# Default params (overridable via query string)
+TRENDLINE_LOOKBACK = 50
+TRENDLINE_USE_LOG  = False
+
+
+def _fit_single_trendline(prices: np.ndarray, support: bool) -> np.ndarray:
+    """
+    Fit a trendline to 'prices' using linear programming so that
+    all prices are on the correct side of the line.
+    Returns [slope, intercept].
+    """
+    n = len(prices)
+    x = np.arange(n, dtype=float)
+
+    # Objective: minimise sum of (line - price) for support,
+    #            maximise sum of (line - price) for resistance
+    # We minimise c @ [slope, intercept] subject to constraints.
+    c = np.array([x.sum(), float(n)])        # proxy for total line height
+    if not support:
+        c = -c
+
+    # Inequality constraints: for each bar the line must be
+    #   >= price  (support)  →  -slope*x - intercept <= -price
+    #   <= price  (resist.)  →   slope*x + intercept <= price
+    sign = -1.0 if support else 1.0
+    A_ub = np.column_stack([sign * x, sign * np.ones(n)])
+    b_ub = sign * prices
+
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, method="highs")
+    if res.status != 0:
+        raise RuntimeError(f"linprog failed: {res.message}")
+    return res.x   # [slope, intercept]
+
+
+def fit_trendlines_high_low(highs: np.ndarray,
+                             lows:  np.ndarray,
+                             closes: np.ndarray) -> tuple:
+    """
+    Returns (support_coefs, resist_coefs) each being [slope, intercept].
+    Support is fitted to lows; resistance to highs.
+    """
+    sup = _fit_single_trendline(lows,  support=True)
+    res = _fit_single_trendline(highs, support=False)
+    return sup, res
+
+
+def generate_trendline_chart(df: pd.DataFrame, ticker: str,
+                              lookback: int = 50,
+                              use_log: bool = False) -> io.BytesIO:
+    """Compute rolling trendline slopes and return a 2-panel dark PNG."""
+
+    data = df.copy()
+
+    if use_log:
+        data["close"] = np.log(data["close"])
+        data["high"]  = np.log(data["high"])
+        data["low"]   = np.log(data["low"])
+
+    if len(data) < lookback:
+        raise ValueError(
+            f"Only {len(data)} bars available but lookback={lookback}. "
+            "Reduce lookback or increase range."
+        )
+
+    support_slope = [np.nan] * len(data)
+    resist_slope  = [np.nan] * len(data)
+
+    for i in range(lookback - 1, len(data)):
+        window = data.iloc[i - lookback + 1: i + 1]
+        try:
+            sup_coefs, res_coefs = fit_trendlines_high_low(
+                window["high"].values,
+                window["low"].values,
+                window["close"].values,
+            )
+            support_slope[i] = sup_coefs[0]
+            resist_slope[i]  = res_coefs[0]
+        except Exception:
+            pass
+
+    data["support_slope"] = support_slope
+    data["resist_slope"]  = resist_slope
+
+    # ── Plot ──────────────────────────────────────────────────
+    plt.style.use("dark_background")
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True,
+                                    gridspec_kw={"height_ratios": [2, 1]})
+    fig.patch.set_facecolor("#0d1117")
+    for ax in (ax1, ax2):
+        ax.set_facecolor("#0d1117")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#21262d")
+
+    # Price panel
+    price_label = "ln(Close)" if use_log else "Close"
+    ax1.plot(data.index, data["close"], color="#00d4ff", linewidth=1.2, label=price_label)
+    ax1.set_ylabel(price_label, color="#00d4ff")
+    ax1.tick_params(axis="y", labelcolor="#00d4ff")
+    ax1.set_title(
+        f"Trendline Slopes — {ticker}  (lookback={lookback})",
+        fontsize=13, pad=10, color="white"
+    )
+    ax1.legend(loc="upper left")
+    ax1.grid(alpha=0.15)
+
+    # Slope panel
+    ax2.plot(data.index, data["support_slope"], color="#00e676",
+             linewidth=1.0, label="Support Slope")
+    ax2.plot(data.index, data["resist_slope"],  color="#ff5252",
+             linewidth=1.0, label="Resistance Slope")
+    ax2.axhline(0, color="white", linewidth=0.5, linestyle="--", alpha=0.4)
+    ax2.set_ylabel("Slope", color="white")
+    ax2.grid(alpha=0.15)
+
+    # ── Detect & mark trend changes ────────────────────────────
+    bullish_dates = []
+    bearish_dates = []
+
+    for i in range(1, len(data)):
+        s_prev = data["support_slope"].iloc[i - 1]
+        s_curr = data["support_slope"].iloc[i]
+        r_prev = data["resist_slope"].iloc[i - 1]
+        r_curr = data["resist_slope"].iloc[i]
+
+        if not np.isnan(s_prev) and not np.isnan(s_curr):
+            if s_prev < 0 and s_curr >= 0:
+                bullish_dates.append(data.index[i])
+
+        if not np.isnan(r_prev) and not np.isnan(r_curr):
+            if r_prev > 0 and r_curr <= 0:
+                bearish_dates.append(data.index[i])
+
+    for date in bullish_dates:
+        ax1.axvline(date, color="green", linestyle=":", linewidth=0.9, alpha=0.7)
+        ax2.axvline(date, color="green", linestyle=":", linewidth=0.9, alpha=0.7)
+        ax2.plot(date, data.loc[date, "support_slope"],
+                 "^", color="green", markersize=8, alpha=0.9, zorder=5)
+        try:
+            lbl = date.strftime("%H:%M") if hasattr(date, "strftime") else str(date)
+        except Exception:
+            lbl = str(date)
+        ax2.text(date, data.loc[date, "support_slope"], lbl,
+                 color="green", fontsize=7, ha="left", va="bottom", rotation=45)
+
+    for date in bearish_dates:
+        ax1.axvline(date, color="red", linestyle=":", linewidth=0.9, alpha=0.7)
+        ax2.axvline(date, color="red", linestyle=":", linewidth=0.9, alpha=0.7)
+        ax2.plot(date, data.loc[date, "resist_slope"],
+                 "v", color="red", markersize=8, alpha=0.9, zorder=5)
+        try:
+            lbl = date.strftime("%H:%M") if hasattr(date, "strftime") else str(date)
+        except Exception:
+            lbl = str(date)
+        ax2.text(date, data.loc[date, "resist_slope"], lbl,
+                 color="red", fontsize=7, ha="left", va="top", rotation=45)
+
+    # Legend
+    handles, labels = ax2.get_legend_handles_labels()
+    handles += [
+        Line2D([0], [0], color="green", linestyle=":", linewidth=0.9, label="Bullish Change"),
+        Line2D([0], [0], color="red",   linestyle=":", linewidth=0.9, label="Bearish Change"),
+    ]
+    labels += ["Bullish Change", "Bearish Change"]
+    ax2.legend(handles, labels, loc="upper left", fontsize=8,
+               facecolor="#161b22", labelcolor="white")
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="#0d1117")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+@app.route("/trendlines/<ticker>")
+def get_trendlines(ticker):
+    """
+    Trendline slopes chart PNG.
+    Params:
+      range    : 1d 5d 1mo 3mo …  (default 5d)
+      interval : 1m 5m 15m 1d …  (default 1m)
+      lookback : int               (default 50)
+      log      : true/false        (default false)
+    """
+    try:
+        range_   = request.args.get("range",    "5d")
+        interval = request.args.get("interval", "1m")
+        lookback = int(request.args.get("lookback", TRENDLINE_LOOKBACK))
+        use_log  = request.args.get("log", "false").lower() == "true"
+
+        raw_df = fetch_ohlcv(ticker, interval=interval, range_=range_)
+        buf    = generate_trendline_chart(raw_df, ticker.upper(),
+                                          lookback=lookback, use_log=use_log)
+        return send_file(buf, mimetype="image/png",
+                         download_name=f"{ticker.upper()}_trendlines.png")
+
+    except req_lib.HTTPError as e:
+        return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════
 # RUN
 # ═══════════════════════════════════════════════════════════
 

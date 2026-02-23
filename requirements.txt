@@ -4,4 +4,4 @@ gunicorn==22.0.0
 numpy==1.26.4
 pandas==2.2.2
 matplotlib==3.9.0
-requests==2.32.3
+scipy==1.13.1
