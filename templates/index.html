@@ -14,7 +14,7 @@
     }
     html, body { height:100%; background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace; font-size:13px; }
 
-    /* ── HEADER ── */
+    /* HEADER */
     header {
       display:flex; align-items:center; justify-content:space-between;
       padding:16px 28px; border-bottom:1px solid var(--border);
@@ -32,7 +32,6 @@
     }
     select#tickerSelect:focus { outline:none; border-color:var(--accent); }
     select#tickerSelect option { background:var(--surface); }
-
     .btn {
       display:inline-flex; align-items:center; gap:6px; padding:8px 16px;
       border-radius:var(--radius); border:1px solid var(--border); background:var(--surface);
@@ -43,18 +42,18 @@
     .btn.primary { background:var(--accent); border-color:var(--accent); color:#000; font-weight:600; }
     .btn.primary:hover { background:#79c0ff; }
 
-    /* ── STATUS BAR ── */
+    /* STATUS BAR */
     #statusBar {
       display:flex; align-items:center; gap:10px; padding:7px 28px;
       background:var(--surface); border-bottom:1px solid var(--border); font-size:11px; color:var(--muted);
     }
     #statusDot { width:7px; height:7px; border-radius:50%; background:var(--muted); transition:background 0.3s; }
     #statusDot.loading { background:var(--gold); animation:pulse 0.8s infinite; }
-    #statusDot.ok { background:var(--green); }
-    #statusDot.error { background:var(--red); }
+    #statusDot.ok      { background:var(--green); }
+    #statusDot.error   { background:var(--red); }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-    /* ── PILLS ── */
+    /* PILLS */
     .pill-group { display:flex; gap:4px; }
     .pill {
       padding:5px 11px; border-radius:20px; border:1px solid var(--border);
@@ -64,14 +63,10 @@
     .pill:hover { border-color:var(--accent); color:var(--accent); }
     .pill.active { background:var(--accent); border-color:var(--accent); color:#000; font-weight:600; }
 
-    /* ── LAYOUT ── */
-    main {
-      display:grid;
-      grid-template-columns:300px 1fr;
-      height:calc(100vh - 95px);
-    }
+    /* LAYOUT */
+    main { display:grid; grid-template-columns:300px 1fr; height:calc(100vh - 95px); }
 
-    /* ── SIDEBAR ── */
+    /* SIDEBAR */
     aside { border-right:1px solid var(--border); overflow-y:auto; background:var(--surface); }
     .sidebar-section { padding:14px 16px; border-bottom:1px solid var(--border); }
     .sidebar-title { font-family:'Syne',sans-serif; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
@@ -92,74 +87,79 @@
     .signal-chip.active-red   { background:rgba(248,81,73,.18); border-color:var(--red); color:var(--red); }
     .signal-chip.inactive     { background:rgba(110,118,129,.08); border-color:var(--border); color:var(--muted); }
 
-    /* ── CONTENT AREA ── */
-    .content-area { display:flex; flex-direction:column; overflow-y:auto; }
+    /* CONTENT AREA */
+    .content-area { display:flex; flex-direction:column; overflow:hidden; }
 
+    /* TAB BAR */
+    .tab-bar {
+      display:flex; align-items:stretch;
+      border-bottom:1px solid var(--border);
+      background:var(--surface);
+    }
+    .tab-btn {
+      display:flex; align-items:center; gap:8px;
+      padding:0 22px; height:42px;
+      font-family:'JetBrains Mono',monospace; font-size:12px;
+      color:var(--muted); cursor:pointer;
+      border:none; border-bottom:2px solid transparent;
+      background:transparent;
+      transition:all 0.15s;
+      white-space:nowrap;
+    }
+    .tab-btn:hover { color:var(--text); background:rgba(255,255,255,0.03); }
+    .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); background:rgba(88,166,255,0.06); }
+    .tab-btn .tab-dot {
+      width:6px; height:6px; border-radius:50%; background:var(--muted);
+      transition:background 0.3s;
+    }
+    .tab-btn.active .tab-dot { background:var(--accent); }
+    .tab-btn .tab-dot.ok    { background:var(--green); }
+    .tab-btn .tab-dot.error { background:var(--red); }
+    .tab-btn .tab-dot.loading { background:var(--gold); animation:pulse 0.8s infinite; }
+
+    /* CONTROLS ROW (inside tab panels) */
     .controls-row {
       display:flex; align-items:center; gap:16px; padding:10px 20px;
       border-bottom:1px solid var(--border); flex-wrap:wrap;
-      position:sticky; top:0; background:var(--bg); z-index:10;
+      background:var(--bg);
     }
     .controls-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
-
-    /* ── MAIN CHART ── */
-    .chart-container { position:relative; min-height:400px; background:var(--bg); }
-    #chartImg { width:100%; display:block; }
-    #chartImg.loading { opacity:0.3; }
-
-    #loadingOverlay {
-      position:absolute; inset:0; display:none; align-items:center; justify-content:center;
-      flex-direction:column; gap:14px; background:rgba(13,17,23,0.8); backdrop-filter:blur(4px); z-index:10;
-    }
-    #loadingOverlay.visible { display:flex; }
-    .spinner { width:34px; height:34px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
-    @keyframes spin { to{transform:rotate(360deg);} }
-    .loading-text { font-family:'Syne',sans-serif; font-size:13px; color:var(--accent); }
-
-    #errorBox { display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; padding:40px; }
-    #errorBox.visible { display:flex; }
-    .error-icon { font-size:32px; }
-    .error-msg { color:var(--red); font-size:13px; text-align:center; }
-
-    /* ── PIVOT SECTION ── */
-    .pivot-section {
-      border-top:2px solid var(--border);
-      background:var(--surface);
-    }
-    .pivot-header {
-      display:flex; align-items:center; gap:12px;
-      padding:10px 20px;
-      border-bottom:1px solid var(--border);
-    }
-    .pivot-title {
-      font-family:'Syne',sans-serif; font-weight:700; font-size:11px;
-      letter-spacing:1.5px; text-transform:uppercase; color:var(--gold);
-    }
-    .pivot-sub { font-size:10px; color:var(--muted); }
-    .pivot-dot {
-      width:7px; height:7px; border-radius:50%; background:var(--muted);
-      margin-left:auto; transition:background 0.3s;
-    }
-    .pivot-dot.loading { background:var(--gold); animation:pulse 0.8s infinite; }
-    .pivot-dot.ok      { background:var(--green); }
-    .pivot-dot.error   { background:var(--red); }
-
-    .pivot-container { position:relative; background:var(--bg); }
-    .pivot-overlay {
-      position:absolute; inset:0; display:none;
-      align-items:center; justify-content:center;
-      background:rgba(13,17,23,0.75); z-index:5;
-    }
-    .pivot-overlay.visible { display:flex; }
-    #pivotImg { width:100%; display:block; }
-
-    /* ── AUTO-REFRESH TOGGLE ── */
     .toggle-wrap { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
     .toggle { width:32px; height:17px; background:var(--border); border-radius:9px; position:relative; transition:background 0.2s; }
     .toggle::after { content:''; position:absolute; width:11px; height:11px; background:#fff; border-radius:50%; top:3px; left:3px; transition:left 0.2s; }
     .toggle.on { background:var(--green); }
     .toggle.on::after { left:18px; }
     #countdown { font-size:11px; color:var(--gold); min-width:46px; }
+
+    /* TAB PANELS */
+    .tab-panels { flex:1; overflow:hidden; position:relative; }
+    .tab-panel {
+      position:absolute; inset:0;
+      display:none; flex-direction:column; overflow-y:auto;
+    }
+    .tab-panel.active { display:flex; }
+
+    /* CHART IMG */
+    .chart-wrap { position:relative; flex:1; min-height:300px; }
+    .chart-wrap img { width:100%; display:block; transition:opacity 0.3s; }
+    .chart-wrap img.loading { opacity:0.3; }
+
+    /* LOADING OVERLAY */
+    .img-overlay {
+      position:absolute; inset:0; display:none;
+      align-items:center; justify-content:center; flex-direction:column; gap:14px;
+      background:rgba(13,17,23,0.8); backdrop-filter:blur(4px); z-index:10;
+    }
+    .img-overlay.visible { display:flex; }
+    .spinner { width:34px; height:34px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg);} }
+    .loading-text { font-family:'Syne',sans-serif; font-size:13px; color:var(--accent); }
+
+    /* ERROR */
+    .img-error { display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; padding:60px; }
+    .img-error.visible { display:flex; }
+    .error-icon { font-size:32px; }
+    .error-msg { color:var(--red); font-size:13px; text-align:center; }
 
     ::-webkit-scrollbar { width:5px; }
     ::-webkit-scrollbar-track { background:transparent; }
@@ -175,8 +175,8 @@
       <select id="tickerSelect"></select>
     </div>
     <button class="btn primary" onclick="loadAll()">▶ Load</button>
-    <a id="downloadLink" class="btn" style="display:none" download>↓ Chart</a>
-    <a id="downloadPivot" class="btn" style="display:none" download>↓ Pivot</a>
+    <a id="dlChart" class="btn" style="display:none" download>↓ Chart</a>
+    <a id="dlPivot" class="btn" style="display:none" download>↓ Pivot</a>
   </div>
 </header>
 
@@ -187,7 +187,7 @@
 </div>
 
 <main>
-  <!-- ── SIDEBAR ── -->
+  <!-- SIDEBAR -->
   <aside>
     <div class="sidebar-section">
       <div class="sidebar-title">Price & VWAP</div>
@@ -238,61 +238,80 @@
     </div>
   </aside>
 
-  <!-- ── CONTENT ── -->
+  <!-- CONTENT -->
   <div class="content-area">
 
-    <!-- Controls -->
-    <div class="controls-row">
-      <span class="controls-label">Range</span>
-      <div class="pill-group" id="rangePills">
-        <button class="pill active" data-val="1d">1D</button>
-        <button class="pill" data-val="5d">5D</button>
-        <button class="pill" data-val="1mo">1M</button>
-        <button class="pill" data-val="3mo">3M</button>
-      </div>
-      <span class="controls-label" style="margin-left:8px">Interval</span>
-      <div class="pill-group" id="intervalPills">
-        <button class="pill active" data-val="1m">1m</button>
-        <button class="pill" data-val="5m">5m</button>
-        <button class="pill" data-val="15m">15m</button>
-        <button class="pill" data-val="1d">1d</button>
-      </div>
-      <div class="toggle-wrap" style="margin-left:auto" onclick="toggleAutoRefresh()">
-        <div class="toggle" id="autoToggle"></div>
-        <span class="controls-label">Auto-refresh</span>
-      </div>
-      <span id="countdown"></span>
+    <!-- TAB BAR -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="chart" onclick="switchTab('chart')">
+        <div class="tab-dot" id="dot_chart"></div> 📈 Price Chart
+      </button>
+      <button class="tab-btn" data-tab="pivot" onclick="switchTab('pivot')">
+        <div class="tab-dot" id="dot_pivot"></div> 📊 Pivot Histogram
+      </button>
     </div>
 
-    <!-- Main 4-panel chart -->
-    <div class="chart-container">
-      <div id="loadingOverlay">
-        <div class="spinner"></div>
-        <div class="loading-text" id="loadingTicker">Loading…</div>
-      </div>
-      <div id="errorBox">
-        <div class="error-icon">⚠</div>
-        <div class="error-msg" id="errorMsg">Something went wrong.</div>
-      </div>
-      <img id="chartImg" src="" alt="chart"/>
-    </div>
+    <!-- TAB PANELS -->
+    <div class="tab-panels">
 
-    <!-- Pivot Histogram -->
-    <div class="pivot-section">
-      <div class="pivot-header">
-        <span class="pivot-title">Pivot Highs &amp; Lows · Histogram</span>
-        <span class="pivot-sub">n1 = n2 = 10 bars · price cluster analysis</span>
-        <div id="pivotDot" class="pivot-dot"></div>
-      </div>
-      <div class="pivot-container">
-        <div id="pivotOverlay" class="pivot-overlay">
-          <div class="spinner"></div>
+      <!-- TAB 1: MAIN CHART -->
+      <div class="tab-panel active" id="tab_chart">
+        <div class="controls-row">
+          <span class="controls-label">Range</span>
+          <div class="pill-group" id="rangePills">
+            <button class="pill active" data-val="1d">1D</button>
+            <button class="pill" data-val="5d">5D</button>
+            <button class="pill" data-val="1mo">1M</button>
+            <button class="pill" data-val="3mo">3M</button>
+          </div>
+          <span class="controls-label" style="margin-left:8px">Interval</span>
+          <div class="pill-group" id="intervalPills">
+            <button class="pill active" data-val="1m">1m</button>
+            <button class="pill" data-val="5m">5m</button>
+            <button class="pill" data-val="15m">15m</button>
+            <button class="pill" data-val="1d">1d</button>
+          </div>
+          <div class="toggle-wrap" style="margin-left:auto" onclick="toggleAutoRefresh()">
+            <div class="toggle" id="autoToggle"></div>
+            <span class="controls-label">Auto-refresh</span>
+          </div>
+          <span id="countdown"></span>
         </div>
-        <img id="pivotImg" src="" alt="pivot histogram"/>
+        <div class="chart-wrap">
+          <div class="img-overlay visible" id="chartOverlay">
+            <div class="spinner"></div>
+            <div class="loading-text" id="chartLoadingText">Loading…</div>
+          </div>
+          <div class="img-error" id="chartError">
+            <div class="error-icon">⚠</div>
+            <div class="error-msg" id="chartErrorMsg"></div>
+          </div>
+          <img id="chartImg" src="" alt="price chart"/>
+        </div>
       </div>
-    </div>
 
-  </div>
+      <!-- TAB 2: PIVOT HISTOGRAM -->
+      <div class="tab-panel" id="tab_pivot">
+        <div class="controls-row">
+          <span class="controls-label" style="color:var(--gold)">📊 Pivot Analysis</span>
+          <span style="font-size:11px;color:var(--muted)">n1 = n2 = 10 bars · price cluster density</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="pivotMeta"></span>
+        </div>
+        <div class="chart-wrap">
+          <div class="img-overlay visible" id="pivotOverlay">
+            <div class="spinner"></div>
+            <div class="loading-text">Detecting pivots…</div>
+          </div>
+          <div class="img-error" id="pivotError">
+            <div class="error-icon">⚠</div>
+            <div class="error-msg" id="pivotErrorMsg"></div>
+          </div>
+          <img id="pivotImg" src="" alt="pivot histogram"/>
+        </div>
+      </div>
+
+    </div><!-- /tab-panels -->
+  </div><!-- /content-area -->
 </main>
 
 <script>
@@ -315,13 +334,14 @@ const SYMBOLS = [
 
 let autoRefresh=false, countdownVal=60, countdownTimer=null;
 let currentRange="1d", currentInterval="1m";
+let activeTab = "chart";
 
 // Populate dropdown
 const sel = document.getElementById("tickerSelect");
 SYMBOLS.forEach(sym => {
   const opt = document.createElement("option");
-  opt.value = sym; opt.textContent = sym.replace(".NS","");
-  if (sym==="ITC.NS") opt.selected = true;
+  opt.value=sym; opt.textContent=sym.replace(".NS","");
+  if(sym==="ITC.NS") opt.selected=true;
   sel.appendChild(opt);
 });
 sel.addEventListener("change", loadAll);
@@ -330,100 +350,119 @@ sel.addEventListener("change", loadAll);
 document.querySelectorAll("#rangePills .pill").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("#rangePills .pill").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active"); currentRange = btn.dataset.val; loadAll();
+    btn.classList.add("active"); currentRange=btn.dataset.val; loadAll();
   });
 });
 document.querySelectorAll("#intervalPills .pill").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("#intervalPills .pill").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active"); currentInterval = btn.dataset.val; loadAll();
+    btn.classList.add("active"); currentInterval=btn.dataset.val; loadAll();
   });
 });
 
+// Tab switching
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab===tab));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id==="tab_"+tab));
+}
+
 function setStatus(state, msg) {
-  document.getElementById("statusDot").className = state;
-  document.getElementById("statusText").textContent = msg;
+  document.getElementById("statusDot").className=state;
+  document.getElementById("statusText").textContent=msg;
+}
+
+function setDot(id, state) {
+  const el = document.getElementById(id);
+  if(el) el.className = "tab-dot " + state;
 }
 
 // ── Load main chart ──
 function loadChart(ticker) {
-  const img = document.getElementById("chartImg");
-  const overlay = document.getElementById("loadingOverlay");
-  const errorBox = document.getElementById("errorBox");
-  overlay.classList.add("visible"); errorBox.classList.remove("visible"); img.classList.add("loading");
-  document.getElementById("loadingTicker").textContent = `Loading ${ticker}…`;
+  const img   = document.getElementById("chartImg");
+  const over  = document.getElementById("chartOverlay");
+  const err   = document.getElementById("chartError");
+  over.classList.add("visible"); err.classList.remove("visible");
+  img.classList.add("loading");
+  document.getElementById("chartLoadingText").textContent=`Loading ${ticker}…`;
+  setDot("dot_chart","loading");
 
   fetch(`/chart/${ticker}?range=${currentRange}&interval=${currentInterval}&t=${Date.now()}`)
-    .then(res => { if (!res.ok) return res.json().then(d=>{throw new Error(d.error||res.statusText);}); return res.blob(); })
-    .then(blob => {
-      const url = URL.createObjectURL(blob);
-      img.onload = () => {
-        overlay.classList.remove("visible"); img.classList.remove("loading");
-        const dl = document.getElementById("downloadLink");
+    .then(res=>{if(!res.ok)return res.json().then(d=>{throw new Error(d.error||res.statusText);});return res.blob();})
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      img.onload=()=>{
+        over.classList.remove("visible"); img.classList.remove("loading");
+        setDot("dot_chart","ok");
+        const dl=document.getElementById("dlChart");
         dl.href=url; dl.download=`${ticker}_chart.png`; dl.style.display="inline-flex";
       };
-      img.src = url;
-      document.getElementById("lastUpdated").textContent =
-        "Updated " + new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-      setStatus("ok", `Loaded ${ticker}`);
+      img.src=url;
+      document.getElementById("lastUpdated").textContent=
+        "Updated "+new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+      setStatus("ok",`Loaded ${ticker}`);
     })
-    .catch(err => {
-      overlay.classList.remove("visible"); img.classList.remove("loading");
-      errorBox.classList.add("visible");
-      document.getElementById("errorMsg").textContent = err.message;
-      setStatus("error", err.message);
+    .catch(e=>{
+      over.classList.remove("visible"); img.classList.remove("loading");
+      err.classList.add("visible"); document.getElementById("chartErrorMsg").textContent=e.message;
+      setDot("dot_chart","error"); setStatus("error",e.message);
     });
 }
 
 // ── Load pivot histogram ──
 function loadPivot(ticker) {
-  const pImg    = document.getElementById("pivotImg");
-  const pOverlay= document.getElementById("pivotOverlay");
-  const pDot    = document.getElementById("pivotDot");
-  pOverlay.classList.add("visible"); pDot.className="pivot-dot loading";
+  const img  = document.getElementById("pivotImg");
+  const over = document.getElementById("pivotOverlay");
+  const err  = document.getElementById("pivotError");
+  over.classList.add("visible"); err.classList.remove("visible");
+  setDot("dot_pivot","loading");
 
   fetch(`/pivot/${ticker}?range=${currentRange}&interval=${currentInterval}&t=${Date.now()}`)
-    .then(res => { if (!res.ok) return res.json().then(d=>{throw new Error(d.error||res.statusText);}); return res.blob(); })
-    .then(blob => {
-      const url = URL.createObjectURL(blob);
-      pImg.onload = () => {
-        pOverlay.classList.remove("visible"); pDot.className="pivot-dot ok";
-        const dp = document.getElementById("downloadPivot");
+    .then(res=>{if(!res.ok)return res.json().then(d=>{throw new Error(d.error||res.statusText);});return res.blob();})
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      img.onload=()=>{
+        over.classList.remove("visible");
+        setDot("dot_pivot","ok");
+        document.getElementById("pivotMeta").textContent=
+          `${ticker}  ·  Range: ${currentRange}  ·  Interval: ${currentInterval}`;
+        const dp=document.getElementById("dlPivot");
         dp.href=url; dp.download=`${ticker}_pivot.png`; dp.style.display="inline-flex";
       };
-      pImg.src = url;
+      img.src=url;
     })
-    .catch(err => {
-      pOverlay.classList.remove("visible"); pDot.className="pivot-dot error";
-      pImg.alt = "Pivot chart error: " + err.message;
+    .catch(e=>{
+      over.classList.remove("visible"); err.classList.add("visible");
+      document.getElementById("pivotErrorMsg").textContent=e.message;
+      setDot("dot_pivot","error");
     });
 }
 
-// ── Load screener sidebar ──
+// ── Screener sidebar ──
 function loadScreener(ticker) {
   fetch(`/screener/${ticker}?range=${currentRange}&interval=${currentInterval}`)
     .then(r=>r.json())
-    .then(data => {
-      if (data.error) return;
-      const s = data.summary;
-      const set = (id,val,cls) => {
+    .then(data=>{
+      if(data.error) return;
+      const s=data.summary;
+      const set=(id,val,cls)=>{
         const el=document.getElementById(id); if(!el)return;
         el.textContent=val??"—"; if(cls) el.className="summary-val "+cls;
       };
       set("s_close",  s.close?.toFixed(2));
-      set("s_vwap",   s.vwap?.toFixed(2), "accent");
+      set("s_vwap",   s.vwap?.toFixed(2),"accent");
       const dev=s.vwap_dev_pct;
-      set("s_vwap_dev", dev!=null?(dev>0?"+":"")+dev.toFixed(3)+"%":"—", dev>0?"up":dev<0?"down":"");
-      set("s_gravity", s.gravity?.toFixed(2));
-      set("s_fib0",   s.fib0?.toFixed(2),  "up");
-      set("s_fib50",  s.fib50?.toFixed(2), "accent");
+      set("s_vwap_dev",dev!=null?(dev>0?"+":"")+dev.toFixed(3)+"%":"—",dev>0?"up":dev<0?"down":"");
+      set("s_gravity",s.gravity?.toFixed(2));
+      set("s_fib0",   s.fib0?.toFixed(2),"up");
+      set("s_fib50",  s.fib50?.toFixed(2),"accent");
       set("s_fib100", s.fib100?.toFixed(2),"down");
-      set("s_hh", s.hh_daily, s.hh_daily>s.ll_daily?"up":"");
-      set("s_ll", s.ll_daily, s.ll_daily>s.hh_daily?"down":"");
-      set("s_hl",  s.daily_hl_diff?.toFixed(2));
-      set("s_vol", s.daily_vol);
-      set("s_z1",  s.zone_above_l1,"up"); set("s_z2",s.zone_l1_l2,"accent");
-      set("s_z3",  s.zone_l2_l3);         set("s_z4",s.zone_below_l3,"down");
+      set("s_hh",s.hh_daily,s.hh_daily>s.ll_daily?"up":"");
+      set("s_ll",s.ll_daily,s.ll_daily>s.hh_daily?"down":"");
+      set("s_hl",s.daily_hl_diff?.toFixed(2));
+      set("s_vol",s.daily_vol);
+      set("s_z1",s.zone_above_l1,"up"); set("s_z2",s.zone_l1_l2,"accent");
+      set("s_z3",s.zone_l2_l3);         set("s_z4",s.zone_below_l3,"down");
       const don=s.don_main;
       set("s_don",don>0?"▲ Bullish":don<0?"▼ Bearish":"→ Neutral",don>0?"up":don<0?"down":"");
       set("s_allgreen",s.all_green?"✔ Yes":"No",s.all_green?"bool-true":"bool-false");
@@ -459,7 +498,7 @@ function loadAll() {
   loadChart(ticker);
   loadPivot(ticker);
   loadScreener(ticker);
-  if (autoRefresh) resetCountdown();
+  if(autoRefresh) resetCountdown();
 }
 
 function toggleAutoRefresh() {
