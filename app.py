@@ -592,6 +592,95 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
 
 
 # ═══════════════════════════════════════════════════════════
+# PIVOT DETECTION
+# ═══════════════════════════════════════════════════════════
+
+def pivotid(df1, l, n1, n2):
+    """
+    Returns:
+        0 → not a pivot
+        1 → pivot low
+        2 → pivot high
+        3 → both (inside bar / doji extreme)
+    """
+    if l - n1 < 0 or l + n2 >= len(df1):
+        return 0
+    pividlow = 1; pividhigh = 1
+    for i in range(l - n1, l + n2 + 1):
+        if df1["low"].iloc[l]  > df1["low"].iloc[i]:  pividlow  = 0
+        if df1["high"].iloc[l] < df1["high"].iloc[i]: pividhigh = 0
+    if pividlow and pividhigh: return 3
+    elif pividlow:             return 1
+    elif pividhigh:            return 2
+    else:                      return 0
+
+
+def generate_pivot_chart(raw_df: pd.DataFrame, ticker: str) -> io.BytesIO:
+    """Compute pivots on raw_df and return a dark-themed histogram PNG."""
+    df = raw_df.copy().reset_index(drop=False)
+    df.index = range(len(df))
+
+    # Use integer-safe column access (reset_index may have added datetime col)
+    if "index" in df.columns:
+        df = df.drop(columns=["index"])
+
+    df["pivot"] = [pivotid(df, i, 10, 10) for i in range(len(df))]
+
+    high_values = df[df["pivot"] == 2]["high"]
+    low_values  = df[df["pivot"] == 1]["low"]
+
+    if high_values.empty and low_values.empty:
+        # Return a simple "no pivots" placeholder
+        fig, ax = plt.subplots(figsize=(12, 4), facecolor=DARK_BG)
+        ax.set_facecolor(DARK_BG)
+        ax.text(0.5, 0.5, "No pivot points detected in this range",
+                color=TEXT_COL, ha="center", va="center", fontsize=13, transform=ax.transAxes)
+        ax.axis("off")
+    else:
+        all_prices = pd.concat([high_values, low_values])
+        price_range = all_prices.max() - all_prices.min()
+        bin_width   = max(price_range / 80, 0.001)   # adaptive bins, max 80
+        bins = max(10, int(price_range / bin_width))
+
+        fig, ax = plt.subplots(figsize=(12, 4), facecolor=DARK_BG)
+        ax.set_facecolor(DARK_BG)
+
+        if not high_values.empty:
+            ax.hist(high_values, bins=bins, alpha=0.65, label=f"Pivot Highs ({len(high_values)})",
+                    color=DN_COL, edgecolor="#00000033", linewidth=0.4)
+        if not low_values.empty:
+            ax.hist(low_values,  bins=bins, alpha=0.65, label=f"Pivot Lows  ({len(low_values)})",
+                    color=VWAP_COL, edgecolor="#00000033", linewidth=0.4)
+
+        # Mark pivot high/low means as vertical lines
+        if not high_values.empty:
+            ax.axvline(high_values.mean(), color=DN_COL,    lw=1.4, linestyle="--",
+                       label=f"Avg High {high_values.mean():.2f}")
+        if not low_values.empty:
+            ax.axvline(low_values.mean(),  color=VWAP_COL,  lw=1.4, linestyle="--",
+                       label=f"Avg Low  {low_values.mean():.2f}")
+
+        ax.set_xlabel("Price (INR)", color=TEXT_COL, fontsize=10)
+        ax.set_ylabel("Frequency",   color=TEXT_COL, fontsize=10)
+        ax.tick_params(colors=TEXT_COL, labelsize=9)
+        for spine in ax.spines.values(): spine.set_edgecolor(GRID_COL)
+        ax.grid(color=GRID_COL, linewidth=0.5, linestyle="--", alpha=0.5)
+        ax.legend(fontsize=9, facecolor="#161b22", edgecolor=GRID_COL, labelcolor=TEXT_COL)
+
+        fig.suptitle(
+            f"Pivot Highs & Lows — {ticker}  (n1=n2=10 bars)",
+            color=TEXT_COL, fontsize=12, fontweight="bold"
+        )
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=DARK_BG)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+# ═══════════════════════════════════════════════════════════
 # FLASK ROUTES
 # ═══════════════════════════════════════════════════════════
 
@@ -684,6 +773,22 @@ def get_chart(ticker):
         return send_file(buf, mimetype="image/png",
                          download_name=f"{ticker.upper()}_chart.png")
 
+    except req_lib.HTTPError as e:
+        return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/pivot/<ticker>")
+def get_pivot(ticker):
+    """Pivot histogram PNG. Params: range (default 1d), interval (default 1m)."""
+    try:
+        range_   = request.args.get("range",    "1d")
+        interval = request.args.get("interval", "1m")
+        raw_df   = fetch_ohlcv(ticker, interval=interval, range_=range_)
+        buf      = generate_pivot_chart(raw_df, ticker.upper())
+        return send_file(buf, mimetype="image/png",
+                         download_name=f"{ticker.upper()}_pivots.png")
     except req_lib.HTTPError as e:
         return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
     except Exception as e:
