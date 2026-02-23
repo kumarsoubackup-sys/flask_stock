@@ -178,6 +178,7 @@
     <a id="dlChart" class="btn" style="display:none" download>↓ Chart</a>
     <a id="dlPivot" class="btn" style="display:none" download>↓ Pivot</a>
     <a id="dlRenko" class="btn" style="display:none" download>↓ Renko</a>
+    <a id="dlTrend" class="btn" style="display:none" download>↓ Trend</a>
   </div>
 </header>
 
@@ -252,6 +253,9 @@
       </button>
       <button class="tab-btn" data-tab="renko" onclick="switchTab('renko')">
         <div class="tab-dot" id="dot_renko"></div> 🧱 Renko
+      </button>
+      <button class="tab-btn" data-tab="trend" onclick="switchTab('trend')">
+        <div class="tab-dot" id="dot_trend"></div> 📉 Trendlines
       </button>
     </div>
 
@@ -345,6 +349,37 @@
         </div>
       </div>
 
+      <!-- TAB 4: TRENDLINE SLOPES -->
+      <div class="tab-panel" id="tab_trend">
+        <div class="controls-row">
+          <span class="controls-label" style="color:#00d4ff">📉 Trendlines</span>
+          <span class="controls-label" style="margin-left:8px">Lookback</span>
+          <div class="pill-group" id="trendLookbackPills">
+            <button class="pill"        data-lb="30"  onclick="setTrendLookback(this)">30</button>
+            <button class="pill active" data-lb="50"  onclick="setTrendLookback(this)">50</button>
+            <button class="pill"        data-lb="100" onclick="setTrendLookback(this)">100</button>
+            <button class="pill"        data-lb="200" onclick="setTrendLookback(this)">200</button>
+          </div>
+          <span class="controls-label" style="margin-left:8px">Scale</span>
+          <div class="pill-group" id="trendScalePills">
+            <button class="pill active" data-log="false" onclick="setTrendScale(this)">Linear</button>
+            <button class="pill"        data-log="true"  onclick="setTrendScale(this)">Log</button>
+          </div>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="trendMeta"></span>
+        </div>
+        <div class="chart-wrap">
+          <div class="img-overlay visible" id="trendOverlay">
+            <div class="spinner"></div>
+            <div class="loading-text">Computing trendlines…</div>
+          </div>
+          <div class="img-error" id="trendError">
+            <div class="error-icon">⚠</div>
+            <div class="error-msg" id="trendErrorMsg"></div>
+          </div>
+          <img id="trendImg" src="" alt="trendline chart"/>
+        </div>
+      </div>
+
     </div><!-- /tab-panels -->
   </div><!-- /content-area -->
 </main>
@@ -376,6 +411,10 @@ let renkoAtr   = true;
 let renkoAtrLen= 20;
 let renkoBrick = 1000.0;
 let renkoMaxBars = 300;
+
+// Trendline state
+let trendLookback = 50;
+let trendLog      = false;
 
 // Populate dropdown
 const sel = document.getElementById("tickerSelect");
@@ -588,6 +627,57 @@ function loadRenko(ticker) {
     });
 }
 
+// Trendline pill handlers
+function setTrendLookback(btn) {
+  document.querySelectorAll("#trendLookbackPills .pill").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  trendLookback = parseInt(btn.dataset.lb);
+  loadTrend(document.getElementById("tickerSelect").value);
+}
+function setTrendScale(btn) {
+  document.querySelectorAll("#trendScalePills .pill").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  trendLog = btn.dataset.log === "true";
+  loadTrend(document.getElementById("tickerSelect").value);
+}
+
+// ── Load trendline chart ──
+function loadTrend(ticker) {
+  const img  = document.getElementById("trendImg");
+  const over = document.getElementById("trendOverlay");
+  const err  = document.getElementById("trendError");
+  over.classList.add("visible"); err.classList.remove("visible");
+  setDot("dot_trend","loading");
+
+  const params = new URLSearchParams({
+    range:    currentRange,
+    interval: currentInterval,
+    lookback: trendLookback,
+    log:      trendLog,
+    t:        Date.now()
+  });
+
+  fetch(`/trendlines/${ticker}?${params}`)
+    .then(res=>{if(!res.ok)return res.json().then(d=>{throw new Error(d.error||res.statusText);});return res.blob();})
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      img.onload=()=>{
+        over.classList.remove("visible");
+        setDot("dot_trend","ok");
+        document.getElementById("trendMeta").textContent =
+          `${ticker}  ·  lookback ${trendLookback}  ·  ${trendLog?"Log":"Linear"}`;
+        const dl=document.getElementById("dlTrend");
+        dl.href=url; dl.download=`${ticker}_trendlines.png`; dl.style.display="inline-flex";
+      };
+      img.src=url;
+    })
+    .catch(e=>{
+      over.classList.remove("visible"); err.classList.add("visible");
+      document.getElementById("trendErrorMsg").textContent=e.message;
+      setDot("dot_trend","error");
+    });
+}
+
 // ── Load all ──
 function loadAll() {
   const ticker=sel.value;
@@ -596,6 +686,7 @@ function loadAll() {
   loadChart(ticker);
   loadPivot(ticker);
   loadRenko(ticker);
+  loadTrend(ticker);
   loadScreener(ticker);
   if(autoRefresh) resetCountdown();
 }
