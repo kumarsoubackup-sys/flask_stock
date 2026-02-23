@@ -177,6 +177,7 @@
     <button class="btn primary" onclick="loadAll()">▶ Load</button>
     <a id="dlChart" class="btn" style="display:none" download>↓ Chart</a>
     <a id="dlPivot" class="btn" style="display:none" download>↓ Pivot</a>
+    <a id="dlRenko" class="btn" style="display:none" download>↓ Renko</a>
   </div>
 </header>
 
@@ -249,6 +250,9 @@
       <button class="tab-btn" data-tab="pivot" onclick="switchTab('pivot')">
         <div class="tab-dot" id="dot_pivot"></div> 📊 Pivot Histogram
       </button>
+      <button class="tab-btn" data-tab="renko" onclick="switchTab('renko')">
+        <div class="tab-dot" id="dot_renko"></div> 🧱 Renko
+      </button>
     </div>
 
     <!-- TAB PANELS -->
@@ -310,6 +314,37 @@
         </div>
       </div>
 
+      <!-- TAB 3: RENKO -->
+      <div class="tab-panel" id="tab_renko">
+        <div class="controls-row">
+          <span class="controls-label" style="color:#d2a8ff">🧱 Renko</span>
+          <div class="pill-group" id="renkoBrickPills">
+            <button class="pill active" data-atr="true"  data-len="14"  onclick="setRenko(this)">ATR-14</button>
+            <button class="pill"        data-atr="true"  data-len="20"  onclick="setRenko(this)">ATR-20</button>
+            <button class="pill"        data-atr="false" data-brick="0.5" onclick="setRenko(this)">Fixed 0.5</button>
+            <button class="pill"        data-atr="false" data-brick="1"   onclick="setRenko(this)">Fixed 1</button>
+          </div>
+          <span class="controls-label" style="margin-left:12px">Max Bars</span>
+          <div class="pill-group" id="renkoBarsPills">
+            <button class="pill"        data-bars="150" onclick="setRenkoBars(this)">150</button>
+            <button class="pill active" data-bars="300" onclick="setRenkoBars(this)">300</button>
+            <button class="pill"        data-bars="500" onclick="setRenkoBars(this)">500</button>
+          </div>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="renkoMeta"></span>
+        </div>
+        <div class="chart-wrap">
+          <div class="img-overlay visible" id="renkoOverlay">
+            <div class="spinner"></div>
+            <div class="loading-text">Computing Renko…</div>
+          </div>
+          <div class="img-error" id="renkoError">
+            <div class="error-icon">⚠</div>
+            <div class="error-msg" id="renkoErrorMsg"></div>
+          </div>
+          <img id="renkoImg" src="" alt="renko chart"/>
+        </div>
+      </div>
+
     </div><!-- /tab-panels -->
   </div><!-- /content-area -->
 </main>
@@ -335,6 +370,12 @@ const SYMBOLS = [
 let autoRefresh=false, countdownVal=60, countdownTimer=null;
 let currentRange="1d", currentInterval="1m";
 let activeTab = "chart";
+
+// Renko state
+let renkoAtr   = true;
+let renkoAtrLen= 14;
+let renkoBrick = 1.0;
+let renkoMaxBars = 300;
 
 // Populate dropdown
 const sel = document.getElementById("tickerSelect");
@@ -490,6 +531,63 @@ function loadScreener(ticker) {
     }).catch(()=>{});
 }
 
+// Renko brick pill handler
+function setRenko(btn) {
+  document.querySelectorAll("#renkoBrickPills .pill").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  renkoAtr    = btn.dataset.atr === "true";
+  renkoAtrLen = parseInt(btn.dataset.len  || 14);
+  renkoBrick  = parseFloat(btn.dataset.brick || 1.0);
+  loadRenko(document.getElementById("tickerSelect").value);
+}
+
+function setRenkoBars(btn) {
+  document.querySelectorAll("#renkoBarsPills .pill").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  renkoMaxBars = parseInt(btn.dataset.bars);
+  loadRenko(document.getElementById("tickerSelect").value);
+}
+
+// ── Load Renko chart ──
+function loadRenko(ticker) {
+  const img  = document.getElementById("renkoImg");
+  const over = document.getElementById("renkoOverlay");
+  const err  = document.getElementById("renkoError");
+  over.classList.add("visible"); err.classList.remove("visible");
+  setDot("dot_renko","loading");
+
+  const params = new URLSearchParams({
+    range:    currentRange,
+    interval: currentInterval,
+    atr:      renkoAtr,
+    atr_len:  renkoAtrLen,
+    brick:    renkoBrick,
+    max_bars: renkoMaxBars,
+    t:        Date.now()
+  });
+
+  fetch(`/renko/${ticker}?${params}`)
+    .then(res=>{if(!res.ok)return res.json().then(d=>{throw new Error(d.error||res.statusText);});return res.blob();})
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      img.onload=()=>{
+        over.classList.remove("visible");
+        setDot("dot_renko","ok");
+        const brickLabel = renkoAtr ? `ATR-${renkoAtrLen}` : `Fixed-${renkoBrick}`;
+        document.getElementById("renkoMeta").textContent=
+          `${ticker}  ·  ${brickLabel}  ·  max ${renkoMaxBars} bars`;
+        const dl=document.getElementById("dlRenko");
+        dl.href=url; dl.download=`${ticker}_renko.png`; dl.style.display="inline-flex";
+      };
+      img.src=url;
+    })
+    .catch(e=>{
+      over.classList.remove("visible"); err.classList.add("visible");
+      document.getElementById("renkoErrorMsg").textContent=e.message;
+      setDot("dot_renko","error");
+    });
+}
+
 // ── Load all ──
 function loadAll() {
   const ticker=sel.value;
@@ -497,6 +595,7 @@ function loadAll() {
   setStatus("loading",`Fetching ${ticker}…`);
   loadChart(ticker);
   loadPivot(ticker);
+  loadRenko(ticker);
   loadScreener(ticker);
   if(autoRefresh) resetCountdown();
 }
