@@ -543,8 +543,24 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
 
     if buy_signals.any():
         ax_excess.scatter(xs[buy_signals],  comb_vals[buy_signals],  marker="^", color=UP_COL, s=100, zorder=10, label="Buy")
+        for xi in xs[buy_signals]:
+            t_label = df.index[xi].strftime("%H:%M")
+            ax_excess.annotate(
+                t_label, (xi, comb_vals[xi]),
+                textcoords="offset points", xytext=(0, 8),
+                ha="center", va="bottom", fontsize=6.5, color=UP_COL,
+                bbox=dict(boxstyle="round,pad=0.15", fc="#0d1117", ec=UP_COL, lw=0.4, alpha=0.85)
+            )
     if sell_signals.any():
         ax_excess.scatter(xs[sell_signals], comb_vals[sell_signals], marker="v", color=DN_COL, s=100, zorder=10, label="Sell")
+        for xi in xs[sell_signals]:
+            t_label = df.index[xi].strftime("%H:%M")
+            ax_excess.annotate(
+                t_label, (xi, comb_vals[xi]),
+                textcoords="offset points", xytext=(0, -8),
+                ha="center", va="top", fontsize=6.5, color=DN_COL,
+                bbox=dict(boxstyle="round,pad=0.15", fc="#0d1117", ec=DN_COL, lw=0.4, alpha=0.85)
+            )
 
     ax_excess.set_ylabel("Excess Vol", color=TEXT_COL, fontsize=8)
     ax_excess.legend(loc="upper left", fontsize=6.5, facecolor="#161b22",
