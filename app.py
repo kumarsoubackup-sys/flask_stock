@@ -1207,7 +1207,7 @@ def get_trendlines(ticker):
       log      : true/false        (default false)
     """
     try:
-        range_   = request.args.get("range",    "5d")
+        range_   = request.args.get("range",    "1d")
         interval = request.args.get("interval", "1m")
         lookback = int(request.args.get("lookback", TRENDLINE_LOOKBACK))
         use_log  = request.args.get("log", "false").lower() == "true"
