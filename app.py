@@ -440,9 +440,9 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     smooth_vals = df["smoothed_volume"].values
     vwap_dev    = df["vwap_dev"].values   # positive = price above VWAP, negative = below
 
-    # ── New signal logic ──────────────────────────────────────────────────────
-    # BUY  : (crossover OR combined > smoothed) AND combined > 0 AND vwap_dev > 0
-    # SELL : (crossunder OR combined < smoothed) AND combined < 0 AND vwap_dev < 0
+    # ── Signal logic ──────────────────────────────────────────────────────────
+    # BUY  : crossover  (combined crosses above smoothed) AND combined > 0 AND vwap_dev > 0
+    # SELL : crossunder (combined crosses below smoothed) AND combined < 0 AND vwap_dev < 0
     # ─────────────────────────────────────────────────────────────────────────
     buy_signals  = [False]
     sell_signals = [False]
@@ -450,15 +450,8 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
         crossover  = comb_vals[i-1] <= smooth_vals[i-1] and comb_vals[i] > smooth_vals[i]
         crossunder = comb_vals[i-1] >= smooth_vals[i-1] and comb_vals[i] < smooth_vals[i]
 
-        buy_cond  = (crossover  or comb_vals[i] > smooth_vals[i]) \
-                    and comb_vals[i] > 0 \
-                    and vwap_dev[i] > 0
-        sell_cond = (crossunder or comb_vals[i] < smooth_vals[i]) \
-                    and comb_vals[i] < 0 \
-                    and vwap_dev[i] < 0
-
-        buy_signals.append(buy_cond)
-        sell_signals.append(sell_cond)
+        buy_signals.append(crossover  and comb_vals[i] > 0 and vwap_dev[i] > 0)
+        sell_signals.append(crossunder and comb_vals[i] < 0 and vwap_dev[i] < 0)
     buy_signals  = np.array(buy_signals)
     sell_signals = np.array(sell_signals)
 
