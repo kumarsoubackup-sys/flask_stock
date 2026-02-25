@@ -430,6 +430,31 @@ class ScreenerIndicator:
 
 
 # ═══════════════════════════════════════════════════════════
+# VOLUME SCREEN
+# ═══════════════════════════════════════════════════════════
+
+def apply_screen(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Volume surge screener.
+    df must contain a 'volume' (or 'Volume') column on a 1-minute timeframe.
+    Adds:
+        screen_pass  (bool) – bar has extraordinary volume spike
+    Conditions:
+        1. Volume >= 6,000,000
+        2. Volume > previous 500-bar SMA of volume × 10
+    """
+    df = df.copy()
+    # Normalise column name
+    vol_col = "volume" if "volume" in df.columns else "Volume"
+    df["vol_sma_500"]  = df[vol_col].rolling(500).mean()
+    df["prev_vol_sma"] = df["vol_sma_500"].shift(1)
+    cond1 = df[vol_col] >= 6_000_000
+    cond2 = df[vol_col] > (df["prev_vol_sma"] * 10)
+    df["screen_pass"] = cond1 & cond2
+    return df
+
+
+# ═══════════════════════════════════════════════════════════
 # CHART GENERATOR  (3-panel: Price | Excess Vol | VWAP Dev)
 # ═══════════════════════════════════════════════════════════
 
@@ -513,6 +538,29 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
             ax_price.scatter(xs[m], df["low"].values[m]*0.9975, marker="^", color=col, s=sz, zorder=7,
                              label=col_name.replace("_"," ").title())
 
+    # ── Volume Surge Screen — diamond markers centred on the candle ──
+    SCREEN_COL = "#ff00ff"   # bright magenta diamonds
+    screen_mask = df["screen_pass"].fillna(False).values.astype(bool)
+    if screen_mask.any():
+        mid_price = (df["high"].values[screen_mask] + df["low"].values[screen_mask]) / 2
+        ax_price.scatter(
+            xs[screen_mask], mid_price,
+            marker="D", color=SCREEN_COL, s=120, zorder=9,
+            edgecolors="#ffffff", linewidths=0.5,
+            label="Vol Surge Screen",
+        )
+        # Annotate each diamond with the volume value
+        for xi, yi in zip(xs[screen_mask], mid_price):
+            vol_val = df["volume"].iloc[xi] if "volume" in df.columns else df["Volume"].iloc[xi]
+            ax_price.annotate(
+                get_vol_str(vol_val),
+                (xi, yi),
+                textcoords="offset points", xytext=(6, 0),
+                ha="left", va="center", fontsize=6.5, color=SCREEN_COL,
+                bbox=dict(boxstyle="round,pad=0.15", fc="#0d1117", ec=SCREEN_COL, lw=0.4, alpha=0.85),
+                zorder=10,
+            )
+
     KEY_TIMES = {
         dtime(9,15):("Session Open","#ffd700","--"),
         dtime(9,20):("ORB End (5m)","#ff9f00",":"),
@@ -585,10 +633,12 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
         mlines.Line2D([], [], color=FIB0_COL,  lw=1.0, ls=":",   label="ORB 0%"),
         mlines.Line2D([], [], color=FIB50_COL, lw=1.0, ls=":",   label="ORB 50%"),
         mlines.Line2D([], [], color=FIB100_COL,lw=1.0, ls=":",   label="ORB 100%"),
-        mlines.Line2D([], [], marker="v", color=DN_COL, lw=0, ms=7, label="G→R Flip"),
-        mlines.Line2D([], [], marker="^", color=UP_COL, lw=0, ms=7, label="R→G Flip"),
-        mlines.Line2D([], [], marker="^", color=UP_COL, lw=0, ms=7, label="Buy Signal"),
-        mlines.Line2D([], [], marker="v", color=DN_COL, lw=0, ms=7, label="Sell Signal"),
+        mlines.Line2D([], [], marker="v", color=DN_COL,    lw=0, ms=7, label="G→R Flip"),
+        mlines.Line2D([], [], marker="^", color=UP_COL,    lw=0, ms=7, label="R→G Flip"),
+        mlines.Line2D([], [], marker="^", color=UP_COL,    lw=0, ms=7, label="Buy Signal"),
+        mlines.Line2D([], [], marker="v", color=DN_COL,    lw=0, ms=7, label="Sell Signal"),
+        mlines.Line2D([], [], marker="D", color="#ff00ff", lw=0, ms=7, label="Vol Surge Screen",
+                      markeredgecolor="#ffffff", markeredgewidth=0.5),
     ]
     ax_price.legend(handles=legend_handles, loc="upper left", fontsize=7.5,
                     facecolor="#161b22", edgecolor=GRID_COL, labelcolor=TEXT_COL, ncol=2)
@@ -683,6 +733,7 @@ def get_chart(ticker):
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
         result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+        result = apply_screen(result)   # needs full history for 500-bar SMA
 
         # Filter to last session only (9:15 – 15:30 IST)
         last_date = result.index[-1].date()
