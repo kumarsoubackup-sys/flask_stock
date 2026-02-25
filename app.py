@@ -430,11 +430,11 @@ class ScreenerIndicator:
 
 
 # ═══════════════════════════════════════════════════════════
-# CHART GENERATOR
+# CHART GENERATOR  (3-panel: Price | Excess Vol | VWAP Dev)
 # ═══════════════════════════════════════════════════════════
 
 def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
-    """Build the 4-panel chart and return it as a PNG BytesIO buffer."""
+    """Build the 3-panel chart and return it as a PNG BytesIO buffer."""
 
     comb_vals   = df["combined_volume"].values
     smooth_vals = df["smoothed_volume"].values
@@ -449,15 +449,14 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
 
     xs = np.arange(len(df))
 
-    fig = plt.figure(figsize=(20, 14), facecolor=DARK_BG)
-    gs  = GridSpec(4, 1, figure=fig, height_ratios=[6, 2.0, 1.8, 1.8],
+    fig = plt.figure(figsize=(20, 12), facecolor=DARK_BG)
+    gs  = GridSpec(3, 1, figure=fig, height_ratios=[6, 2.0, 1.8],
                    hspace=0.06, left=0.06, right=0.97, top=0.93, bottom=0.08)
     ax_price  = fig.add_subplot(gs[0])
     ax_excess = fig.add_subplot(gs[1], sharex=ax_price)
-    ax_vol    = fig.add_subplot(gs[2], sharex=ax_price)
-    ax_dev    = fig.add_subplot(gs[3], sharex=ax_price)
+    ax_dev    = fig.add_subplot(gs[2], sharex=ax_price)
 
-    for ax in (ax_price, ax_excess, ax_vol, ax_dev):
+    for ax in (ax_price, ax_excess, ax_dev):
         ax.set_facecolor(DARK_BG)
         ax.tick_params(colors=TEXT_COL, labelsize=8)
         ax.yaxis.label.set_color(TEXT_COL)
@@ -516,17 +515,10 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     for kt, (label, kc, ls) in KEY_TIMES.items():
         idxs = [i for i, ts in enumerate(df.index) if ts.time() == kt]
         if idxs:
-            for ax in (ax_price, ax_excess, ax_vol, ax_dev):
+            for ax in (ax_price, ax_excess, ax_dev):
                 ax.axvline(idxs[0], color=kc, lw=0.9, linestyle=ls, alpha=0.8, zorder=1)
 
-    # ── Panel 2: Volume ──
-    bull_mask = df["close"].values >= df["open"].values
-    ax_vol.bar(xs, df["volume"].values, color=np.where(bull_mask, UP_COL, DN_COL), width=0.8, alpha=0.85)
-    ax_vol.set_ylabel("Volume", color=TEXT_COL, fontsize=8)
-    avg_vol = df["daily_vol"].iloc[-1] / max(1, len(df))
-    ax_vol.axhline(avg_vol, color="#888888", lw=1.0, linestyle="--")
-
-    # ── Panel 3: VWAP Dev % ──
+    # ── Panel 2: VWAP Dev % ──
     dev_vals = df["vwap_dev"].values
     ax_dev.fill_between(xs, dev_vals, 0, where=(dev_vals>=0), color=UP_COL, alpha=0.35)
     ax_dev.fill_between(xs, dev_vals, 0, where=(dev_vals<0),  color=DN_COL, alpha=0.35)
@@ -534,7 +526,7 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     ax_dev.axhline(0, color=TEXT_COL, lw=0.8)
     ax_dev.set_ylabel("VWAP Dev %", color=TEXT_COL, fontsize=8)
 
-    # ── Panel 4: Excess Combined Volume ──
+    # ── Panel 3: Excess Combined Volume ──
     ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals>=0), color=UP_COL, alpha=0.25)
     ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals<0),  color=DN_COL, alpha=0.25)
     ax_excess.plot(xs, comb_vals,   color=COMB_COL,   lw=1.0, alpha=0.8, label="Combined Vol")
@@ -571,7 +563,6 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     ax_price.set_ylabel("Price (INR)", color=TEXT_COL, fontsize=9)
     plt.setp(ax_price.get_xticklabels(),  visible=False)
     plt.setp(ax_excess.get_xticklabels(), visible=False)
-    plt.setp(ax_vol.get_xticklabels(),    visible=False)
 
     tick_pos = np.linspace(0, len(xs)-1, min(12, len(xs)), dtype=int)
     ax_dev.set_xticks(tick_pos)
@@ -600,95 +591,6 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
         color=TEXT_COL, fontsize=13, fontweight="bold", y=0.97
     )
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=DARK_BG)
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-
-# ═══════════════════════════════════════════════════════════
-# PIVOT DETECTION
-# ═══════════════════════════════════════════════════════════
-
-def pivotid(df1, l, n1, n2):
-    """
-    Returns:
-        0 → not a pivot
-        1 → pivot low
-        2 → pivot high
-        3 → both (inside bar / doji extreme)
-    """
-    if l - n1 < 0 or l + n2 >= len(df1):
-        return 0
-    pividlow = 1; pividhigh = 1
-    for i in range(l - n1, l + n2 + 1):
-        if df1["low"].iloc[l]  > df1["low"].iloc[i]:  pividlow  = 0
-        if df1["high"].iloc[l] < df1["high"].iloc[i]: pividhigh = 0
-    if pividlow and pividhigh: return 3
-    elif pividlow:             return 1
-    elif pividhigh:            return 2
-    else:                      return 0
-
-
-def generate_pivot_chart(raw_df: pd.DataFrame, ticker: str) -> io.BytesIO:
-    """Compute pivots on raw_df and return a dark-themed histogram PNG."""
-    df = raw_df.copy().reset_index(drop=False)
-    df.index = range(len(df))
-
-    # Use integer-safe column access (reset_index may have added datetime col)
-    if "index" in df.columns:
-        df = df.drop(columns=["index"])
-
-    df["pivot"] = [pivotid(df, i, 10, 10) for i in range(len(df))]
-
-    high_values = df[df["pivot"] == 2]["high"]
-    low_values  = df[df["pivot"] == 1]["low"]
-
-    if high_values.empty and low_values.empty:
-        # Return a simple "no pivots" placeholder
-        fig, ax = plt.subplots(figsize=(12, 4), facecolor=DARK_BG)
-        ax.set_facecolor(DARK_BG)
-        ax.text(0.5, 0.5, "No pivot points detected in this range",
-                color=TEXT_COL, ha="center", va="center", fontsize=13, transform=ax.transAxes)
-        ax.axis("off")
-    else:
-        all_prices = pd.concat([high_values, low_values])
-        price_range = all_prices.max() - all_prices.min()
-        bin_width   = max(price_range / 80, 0.001)   # adaptive bins, max 80
-        bins = max(10, int(price_range / bin_width))
-
-        fig, ax = plt.subplots(figsize=(12, 4), facecolor=DARK_BG)
-        ax.set_facecolor(DARK_BG)
-
-        if not high_values.empty:
-            ax.hist(high_values, bins=bins, alpha=0.65, label=f"Pivot Highs ({len(high_values)})",
-                    color=DN_COL, edgecolor="#00000033", linewidth=0.4)
-        if not low_values.empty:
-            ax.hist(low_values,  bins=bins, alpha=0.65, label=f"Pivot Lows  ({len(low_values)})",
-                    color=VWAP_COL, edgecolor="#00000033", linewidth=0.4)
-
-        # Mark pivot high/low means as vertical lines
-        if not high_values.empty:
-            ax.axvline(high_values.mean(), color=DN_COL,    lw=1.4, linestyle="--",
-                       label=f"Avg High {high_values.mean():.2f}")
-        if not low_values.empty:
-            ax.axvline(low_values.mean(),  color=VWAP_COL,  lw=1.4, linestyle="--",
-                       label=f"Avg Low  {low_values.mean():.2f}")
-
-        ax.set_xlabel("Price (INR)", color=TEXT_COL, fontsize=10)
-        ax.set_ylabel("Frequency",   color=TEXT_COL, fontsize=10)
-        ax.tick_params(colors=TEXT_COL, labelsize=9)
-        for spine in ax.spines.values(): spine.set_edgecolor(GRID_COL)
-        ax.grid(color=GRID_COL, linewidth=0.5, linestyle="--", alpha=0.5)
-        ax.legend(fontsize=9, facecolor="#161b22", edgecolor=GRID_COL, labelcolor=TEXT_COL)
-
-        fig.suptitle(
-            f"Pivot Highs & Lows — {ticker}  (n1=n2=10 bars)",
-            color=TEXT_COL, fontsize=12, fontweight="bold"
-        )
-
-    plt.tight_layout()
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=DARK_BG)
     plt.close(fig)
@@ -764,7 +666,7 @@ def get_screener(ticker):
 
 @app.route("/chart/<ticker>")
 def get_chart(ticker):
-    """Generate 4-panel PNG chart. Params: range (default 1d), interval (default 1m)."""
+    """Generate 3-panel PNG chart. Params: range (default 1d), interval (default 1m)."""
     try:
         range_   = request.args.get("range",    "1d")
         interval = request.args.get("interval", "1m")
@@ -789,22 +691,6 @@ def get_chart(ticker):
         return send_file(buf, mimetype="image/png",
                          download_name=f"{ticker.upper()}_chart.png")
 
-    except req_lib.HTTPError as e:
-        return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/pivot/<ticker>")
-def get_pivot(ticker):
-    """Pivot histogram PNG. Params: range (default 1d), interval (default 1m)."""
-    try:
-        range_   = request.args.get("range",    "1d")
-        interval = request.args.get("interval", "1m")
-        raw_df   = fetch_ohlcv(ticker, interval=interval, range_=range_)
-        buf      = generate_pivot_chart(raw_df, ticker.upper())
-        return send_file(buf, mimetype="image/png",
-                         download_name=f"{ticker.upper()}_pivots.png")
     except req_lib.HTTPError as e:
         return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
     except Exception as e:
