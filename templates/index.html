@@ -27,16 +27,44 @@
     background: #161b22;
     border-bottom: 1px solid #21262d;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
   #topbar h1 { font-size: 15px; font-weight: 700; color: #58a6ff; white-space: nowrap; }
-  #ticker-input {
-    flex: 1; max-width: 200px;
-    padding: 5px 10px;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 13px; text-transform: uppercase;
-    outline: none;
+
+  /* ── TICKER DROPDOWN ── */
+  .ticker-wrap {
+    position: relative; width: 210px; flex-shrink: 0;
   }
-  #ticker-input:focus { border-color: #58a6ff; }
+  #ticker-search {
+    width: 100%; padding: 5px 28px 5px 10px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    color: #c9d1d9; font-size: 13px;
+    outline: none; cursor: pointer;
+  }
+  #ticker-search::placeholder { color: #8b949e; text-transform: none; }
+  #ticker-search:focus { border-color: #58a6ff; }
+  .ticker-arrow {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    color: #8b949e; pointer-events: none; font-size: 10px;
+  }
+  #ticker-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+    max-height: 280px; overflow-y: auto;
+    z-index: 200; display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.6);
+  }
+  #ticker-dropdown.open { display: block; }
+  #dd-search-input {
+    width: 100%; padding: 6px 10px;
+    background: #0d1117; border: none; border-bottom: 1px solid #30363d;
+    color: #c9d1d9; font-size: 12px; outline: none;
+  }
+  .dd-item {
+    padding: 6px 12px; cursor: pointer; font-size: 12px; color: #c9d1d9;
+    white-space: nowrap;
+  }
+  .dd-item:hover, .dd-item.highlighted { background: #1f6feb; color: #fff; }
 
   select {
     padding: 5px 8px;
@@ -48,10 +76,20 @@
   .btn {
     padding: 5px 14px; border-radius: 6px; border: none;
     font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .15s;
+    white-space: nowrap;
   }
   .btn:hover { opacity: .85; }
   .btn-blue  { background: #1f6feb; color: #fff; }
   .btn-gray  { background: #21262d; color: #c9d1d9; }
+
+  /* countdown pill */
+  #countdown {
+    font-size: 11px; color: #8b949e;
+    padding: 3px 9px; border: 1px solid #30363d; border-radius: 12px;
+    background: #0d1117; min-width: 72px; text-align: center;
+    white-space: nowrap;
+  }
+  #countdown.ticking { color: #58a6ff; border-color: #1f6feb; }
 
   #status {
     margin-left: auto; font-size: 12px; color: #8b949e;
@@ -101,7 +139,6 @@
     text-align: right;
   }
 
-  /* colour helpers */
   .val-up    { color: #26a641 !important; }
   .val-dn    { color: #f85149 !important; }
   .val-neu   { color: #c9d1d9 !important; }
@@ -162,7 +199,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #loading-overlay p { color: #8b949e; font-size: 13px; }
 
-  /* ── SCROLLBAR ── */
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
@@ -173,7 +209,17 @@
 <!-- TOP BAR -->
 <div id="topbar">
   <h1>📈 NSE Screener</h1>
-  <input id="ticker-input" type="text" placeholder="Symbol, e.g. RELIANCE.NS" value="RELIANCE.NS"/>
+
+  <!-- Searchable ticker dropdown -->
+  <div class="ticker-wrap" id="ticker-wrap">
+    <input id="ticker-search" type="text" placeholder="Search symbol…" autocomplete="off" value="RELIANCE.NS"/>
+    <span class="ticker-arrow">▼</span>
+    <div id="ticker-dropdown">
+      <input id="dd-search-input" type="text" placeholder="Filter…" autocomplete="off"/>
+      <div id="dd-list"></div>
+    </div>
+  </div>
+
   <select id="range-sel">
     <option value="1d" selected>1 Day</option>
     <option value="5d">5 Days</option>
@@ -186,6 +232,7 @@
   </select>
   <button class="btn btn-blue" onclick="loadAll()">Load</button>
   <button class="btn btn-gray"  onclick="loadChart()">Chart Only</button>
+  <span id="countdown">⏱ 60s</span>
   <span id="status">—</span>
 </div>
 
@@ -333,10 +380,8 @@
       </div>
     </div>
 
-    <!-- Last Updated -->
     <div style="padding: 4px; color: #8b949e; font-size: 11px;" id="m-datetime">—</div>
-
-  </div><!-- /sidebar -->
+  </div>
 
   <!-- CHART AREA -->
   <div id="chart-area">
@@ -348,21 +393,115 @@
       <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.5">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
       </svg>
-      <p>Enter a ticker and press <strong>Load</strong></p>
+      <p>Select a symbol and press <strong>Load</strong></p>
     </div>
     <img id="chart-img" alt="Chart"/>
   </div>
 
-</div><!-- /main -->
+</div>
 
 <script>
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── Stock symbols ─────────────────────────────────────────────────────────────
+const SYMBOLS = [
+  "ATGL.NS","NYKAA.NS","DMART.NS","BANKBARODA.NS","PGHH.NS","LTIM.NS",
+  "HDFCAMC.NS","BANDHANBNK.NS","VEDL.NS","ADANIGREEN.NS","AMBUJACEM.NS",
+  "PIDILITIND.NS","ICICIGI.NS","ICICIPRULI.NS","INDIGO.NS","GAIL.NS",
+  "IOC.NS","MOTHERSON.NS","GLAND.NS","BAJAJHLDNG.NS","GODREJCP.NS",
+  "DLF.NS","MARICO.NS","NAUKRI.NS","ACC.NS","HAVELLS.NS","HAL.NS",
+  "MPHASIS.NS","LICI.NS","TORNTPHARM.NS","BEL.NS","PIIND.NS","IRCTC.NS",
+  "COLPAL.NS","INDUSTOWER.NS","SBICARD.NS","BIOCON.NS","BERGEPAINT.NS",
+  "TATAPOWER.NS","SIEMENS.NS","BOSCHLTD.NS","CHOLAFIN.NS","SRF.NS",
+  "DABUR.NS","PAYTM.NS","MUTHOOTFIN.NS","BHARTIARTL.NS","EICHERMOT.NS",
+  "SBIN.NS","AXISBANK.NS","TATASTEEL.NS","SBILIFE.NS","ADANIPORTS.NS",
+  "HINDALCO.NS","JSWSTEEL.NS","ONGC.NS","ICICIBANK.NS","BPCL.NS",
+  "INDUSINDBK.NS","HCLTECH.NS","SUNPHARMA.NS","WIPRO.NS","HEROMOTOCO.NS",
+  "M&M.NS","INFY.NS","BAJFINANCE.NS","ADANIENT.NS","GRASIM.NS","TCS.NS",
+  "HDFCLIFE.NS","ITC.NS","MARUTI.NS","UPL.NS","DRREDDY.NS","NTPC.NS",
+  "RELIANCE.NS","CIPLA.NS","KOTAKBANK.NS","BAJAJFINSV.NS","HINDUNILVR.NS",
+  "ASIANPAINT.NS","TECHM.NS","NESTLEIND.NS","POWERGRID.NS","LT.NS",
+  "BAJAJ-AUTO.NS","BRITANNIA.NS","TATACONSUM.NS","COALINDIA.NS",
+  "ULTRACEMCO.NS","DIVISLAB.NS","TITAN.NS","APOLLOHOSP.NS"
+].sort();
+
+// ── DOM helpers ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
+// ── Build dropdown ────────────────────────────────────────────────────────────
+let selectedTicker = 'RELIANCE.NS';
+
+function buildList(filter = '') {
+  const list = $('dd-list');
+  list.innerHTML = '';
+  const q = filter.toUpperCase();
+  SYMBOLS.filter(s => s.includes(q)).forEach(sym => {
+    const d = document.createElement('div');
+    d.className = 'dd-item' + (sym === selectedTicker ? ' highlighted' : '');
+    d.textContent = sym;
+    d.addEventListener('mousedown', () => selectTicker(sym));
+    list.appendChild(d);
+  });
+}
+
+function selectTicker(sym) {
+  selectedTicker = sym;
+  $('ticker-search').value = sym;
+  closeDropdown();
+}
+
+function openDropdown() {
+  $('dd-search-input').value = '';
+  buildList('');
+  $('ticker-dropdown').classList.add('open');
+  $('dd-search-input').focus();
+}
+
+function closeDropdown() {
+  $('ticker-dropdown').classList.remove('open');
+}
+
+$('ticker-search').addEventListener('focus', openDropdown);
+$('ticker-search').addEventListener('input', function() {
+  selectedTicker = this.value.toUpperCase();
+  buildList(this.value);
+  $('ticker-dropdown').classList.add('open');
+});
+$('dd-search-input').addEventListener('input', function() {
+  buildList(this.value);
+});
+
+// Close when clicking outside
+document.addEventListener('mousedown', e => {
+  if (!$('ticker-wrap').contains(e.target)) closeDropdown();
+});
+
+// ── Countdown timer ───────────────────────────────────────────────────────────
+const REFRESH_SECS = 60;
+let countdown = REFRESH_SECS;
+let countdownEl = $('countdown');
+
+function updateCountdown() {
+  countdownEl.textContent = `⏱ ${countdown}s`;
+  if (countdown <= 10) {
+    countdownEl.classList.add('ticking');
+  } else {
+    countdownEl.classList.remove('ticking');
+  }
+  countdown--;
+  if (countdown < 0) {
+    countdown = REFRESH_SECS;
+    // Only auto-refresh if a chart is already loaded
+    if ($('chart-img').style.display !== 'none') {
+      loadAll(true); // silent refresh (no sidebar reset flicker)
+    }
+  }
+}
+
+setInterval(updateCountdown, 1000);
+
+// ── Misc helpers ──────────────────────────────────────────────────────────────
 function setStatus(msg, color = '#8b949e') {
-  const el = $('status');
-  el.textContent = msg;
-  el.style.color = color;
+  $('status').textContent = msg;
+  $('status').style.color = color;
 }
 
 function showLoading(msg = 'Loading…') {
@@ -379,13 +518,7 @@ function fmt(v, decimals = 2) {
 }
 
 function badge(active, trueLabel, falseLabel, trueClass, falseClass) {
-  const lbl   = active ? trueLabel  : falseLabel;
-  const cls   = active ? trueClass  : falseClass;
-  return `<span class="badge ${cls}">${lbl}</span>`;
-}
-
-function boolBadge(val) {
-  return badge(val, 'YES', 'NO', 'badge-green', 'badge-gray');
+  return `<span class="badge ${active ? trueClass : falseClass}">${active ? trueLabel : falseLabel}</span>`;
 }
 
 function donBadge(val) {
@@ -394,21 +527,14 @@ function donBadge(val) {
   return `<span class="badge badge-gray">FLAT —</span>`;
 }
 
-function colorVal(el, val, posClass, negClass) {
-  el.className = 'metric-value';
-  if (val > 0) el.classList.add(posClass);
-  else if (val < 0) el.classList.add(negClass);
-}
-
-// ── populate sidebar ─────────────────────────────────────────────────────────
+// ── Populate sidebar ──────────────────────────────────────────────────────────
 function populateSidebar(s) {
   // Price & VWAP
   const closeEl = $('m-close');
   closeEl.textContent = fmt(s.close);
   closeEl.className = 'metric-value';
-  if (s.vwap !== null && s.close !== null) {
+  if (s.vwap !== null && s.close !== null)
     closeEl.classList.add(s.close >= s.vwap ? 'val-up' : 'val-dn');
-  }
 
   $('m-vwap').textContent = fmt(s.vwap);
 
@@ -438,7 +564,7 @@ function populateSidebar(s) {
   $('m-z4').textContent = s.zone_below_l3;
 
   // Donchian
-  $('m-don').innerHTML     = donBadge(s.don_main);
+  $('m-don').innerHTML      = donBadge(s.don_main);
   $('m-allgreen').innerHTML = badge(s.all_green, 'YES ✓', 'NO', 'badge-green', 'badge-gray');
   $('m-allred').innerHTML   = badge(s.all_red,   'YES ✓', 'NO', 'badge-red',   'badge-gray');
 
@@ -453,21 +579,16 @@ function populateSidebar(s) {
   $('m-g2r').innerHTML     = badge(s.signal_green_to_red, 'FLIP ↓',   'NO', 'badge-red',    'badge-gray');
   $('m-r2g').innerHTML     = badge(s.signal_red_to_green, 'FLIP ↑',   'NO', 'badge-green',  'badge-gray');
 
-  // Timestamp
   $('m-datetime').textContent = 'Updated: ' + (s.datetime || '—');
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
-function getTicker()   { return $('ticker-input').value.trim().toUpperCase() || 'RELIANCE.NS'; }
+function getTicker()   { return (selectedTicker || $('ticker-search').value.trim()).toUpperCase() || 'RELIANCE.NS'; }
 function getRange()    { return $('range-sel').value; }
 function getInterval() { return $('interval-sel').value; }
 
 async function loadScreener() {
-  const ticker   = getTicker();
-  const range_   = getRange();
-  const interval = getInterval();
-  const url = `/screener/${ticker}?range=${range_}&interval=${interval}`;
-
+  const url = `/screener/${getTicker()}?range=${getRange()}&interval=${getInterval()}`;
   const res  = await fetch(url);
   const json = await res.json();
   if (json.error) throw new Error(json.error);
@@ -476,11 +597,7 @@ async function loadScreener() {
 }
 
 async function loadChart() {
-  const ticker   = getTicker();
-  const range_   = getRange();
-  const interval = getInterval();
-  const url = `/chart/${ticker}?range=${range_}&interval=${interval}&_t=${Date.now()}`;
-
+  const url = `/chart/${getTicker()}?range=${getRange()}&interval=${getInterval()}&_t=${Date.now()}`;
   showLoading('Generating chart…');
   try {
     const res = await fetch(url);
@@ -488,12 +605,15 @@ async function loadChart() {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.error || `HTTP ${res.status}`);
     }
-    const blob = await res.blob();
+    const blob   = await res.blob();
     const objUrl = URL.createObjectURL(blob);
-    const img = $('chart-img');
-    img.onload = () => { $('placeholder').style.display = 'none'; img.style.display = 'block'; };
+    const img    = $('chart-img');
+    img.onload = () => {
+      $('placeholder').style.display = 'none';
+      img.style.display = 'block';
+    };
     img.src = objUrl;
-    setStatus(`Chart loaded — ${ticker}`, '#26a641');
+    setStatus(`✓ ${getTicker()} — chart ready`, '#26a641');
   } catch(e) {
     setStatus('Chart error: ' + e.message, '#f85149');
   } finally {
@@ -501,23 +621,23 @@ async function loadChart() {
   }
 }
 
-async function loadAll() {
+// silent = true → no sidebar reset flicker (used by auto-refresh)
+async function loadAll(silent = false) {
   const ticker = getTicker();
-  showLoading('Fetching data…');
-  setStatus('Loading…', '#8b949e');
+  if (!silent) {
+    showLoading('Fetching data…');
+    setStatus('Loading…', '#8b949e');
+    document.querySelectorAll('.metric-value').forEach(el => {
+      el.textContent = '—'; el.className = 'metric-value';
+    });
+    $('m-datetime').textContent = '—';
+  }
 
-  // Reset sidebar to dashes
-  document.querySelectorAll('.metric-value').forEach(el => {
-    el.textContent = '—'; el.innerHTML = '—'; el.className = 'metric-value';
-  });
-  $('m-datetime').textContent = '—';
+  // Reset countdown on manual load
+  if (!silent) countdown = REFRESH_SECS;
 
   try {
-    // Run screener and chart in parallel
-    const [screenerResult] = await Promise.all([
-      loadScreener(),
-      loadChart(),
-    ]);
+    const [screenerResult] = await Promise.all([loadScreener(), loadChart()]);
     setStatus(`✓ ${ticker}  ·  ${screenerResult.bars} bars`, '#26a641');
   } catch(e) {
     setStatus('Error: ' + e.message, '#f85149');
@@ -525,25 +645,14 @@ async function loadAll() {
   }
 }
 
-// ── Enter key shortcut ────────────────────────────────────────────────────────
-$('ticker-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') loadAll();
+// ── Keyboard shortcut ─────────────────────────────────────────────────────────
+$('ticker-search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { closeDropdown(); loadAll(); }
+  if (e.key === 'Escape') closeDropdown();
 });
 
-// ── Auto-refresh every 60s during market hours (IST 09:15–15:30) ─────────────
-function isMarketHours() {
-  const now = new Date();
-  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const h = ist.getHours(), m = ist.getMinutes();
-  const mins = h * 60 + m;
-  return mins >= 555 && mins <= 930; // 09:15 – 15:30
-}
-
-setInterval(() => {
-  if (isMarketHours() && $('chart-img').style.display !== 'none') {
-    loadAll();
-  }
-}, 60_000);
+// Initial list build
+buildList('');
 </script>
 </body>
 </html>
