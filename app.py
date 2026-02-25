@@ -433,14 +433,14 @@ class ScreenerIndicator:
 # VOLUME SCREEN
 # ═══════════════════════════════════════════════════════════
 
-def apply_screen(df: pd.DataFrame) -> pd.DataFrame:
+def apply_screen(df: pd.DataFrame, min_volume: int = 6_000_000) -> pd.DataFrame:
     """
     Volume surge screener.
     df must contain a 'volume' (or 'Volume') column on a 1-minute timeframe.
     Adds:
         screen_pass  (bool) – bar has extraordinary volume spike
     Conditions:
-        1. Volume >= 6,000,000
+        1. Volume >= min_volume  (configurable, default 6,000,000)
         2. Volume > previous 500-bar SMA of volume × 10
     """
     df = df.copy()
@@ -448,7 +448,7 @@ def apply_screen(df: pd.DataFrame) -> pd.DataFrame:
     vol_col = "volume" if "volume" in df.columns else "Volume"
     df["vol_sma_500"]  = df[vol_col].rolling(500).mean()
     df["prev_vol_sma"] = df["vol_sma_500"].shift(1)
-    cond1 = df[vol_col] >= 6_000_000
+    cond1 = df[vol_col] >= min_volume
     cond2 = df[vol_col] > (df["prev_vol_sma"] * 10)
     df["screen_pass"] = cond1 & cond2
     return df
@@ -733,7 +733,8 @@ def get_chart(ticker):
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
         result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
-        result = apply_screen(result)   # needs full history for 500-bar SMA
+        min_vol = int(request.args.get('min_vol', 6_000_000))
+        result = apply_screen(result, min_volume=min_vol)   # needs full history for 500-bar SMA
 
         # Filter to last session only (9:15 – 15:30 IST)
         last_date = result.index[-1].date()
@@ -755,6 +756,127 @@ def get_chart(ticker):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+
+# ═══════════════════════════════════════════════════════════
+# BULK SCANNER ENDPOINT
+# ═══════════════════════════════════════════════════════════
+
+SCAN_SYMBOLS = [
+    "ATGL.NS","NYKAA.NS","DMART.NS","BANKBARODA.NS","PGHH.NS","LTIM.NS",
+    "HDFCAMC.NS","BANDHANBNK.NS","VEDL.NS","ADANIGREEN.NS","AMBUJACEM.NS",
+    "PIDILITIND.NS","ICICIGI.NS","ICICIPRULI.NS","INDIGO.NS","GAIL.NS",
+    "IOC.NS","MOTHERSON.NS","GLAND.NS","BAJAJHLDNG.NS","GODREJCP.NS",
+    "DLF.NS","MARICO.NS","NAUKRI.NS","ACC.NS","HAVELLS.NS","HAL.NS",
+    "MPHASIS.NS","LICI.NS","TORNTPHARM.NS","BEL.NS","PIIND.NS","IRCTC.NS",
+    "COLPAL.NS","INDUSTOWER.NS","SBICARD.NS","BIOCON.NS","BERGEPAINT.NS",
+    "TATAPOWER.NS","SIEMENS.NS","BOSCHLTD.NS","CHOLAFIN.NS","SRF.NS",
+    "DABUR.NS","PAYTM.NS","MUTHOOTFIN.NS","BHARTIARTL.NS","EICHERMOT.NS",
+    "SBIN.NS","AXISBANK.NS","TATASTEEL.NS","SBILIFE.NS","ADANIPORTS.NS",
+    "HINDALCO.NS","JSWSTEEL.NS","ONGC.NS","ICICIBANK.NS","BPCL.NS",
+    "INDUSINDBK.NS","HCLTECH.NS","SUNPHARMA.NS","WIPRO.NS","HEROMOTOCO.NS",
+    "M&M.NS","INFY.NS","BAJFINANCE.NS","ADANIENT.NS","GRASIM.NS","TCS.NS",
+    "HDFCLIFE.NS","ITC.NS","MARUTI.NS","UPL.NS","DRREDDY.NS","NTPC.NS",
+    "RELIANCE.NS","CIPLA.NS","KOTAKBANK.NS","BAJAJFINSV.NS","HINDUNILVR.NS",
+    "ASIANPAINT.NS","TECHM.NS","NESTLEIND.NS","POWERGRID.NS","LT.NS",
+    "BAJAJ-AUTO.NS","BRITANNIA.NS","TATACONSUM.NS","COALINDIA.NS",
+    "ULTRACEMCO.NS","DIVISLAB.NS","TITAN.NS","APOLLOHOSP.NS",
+]
+
+
+def _score_symbol(ticker: str, interval: str = "1m") -> dict:
+    """Fetch latest data for one symbol and compute a buy/sell score."""
+    try:
+        raw_df = fetch_ohlcv(ticker, interval=interval, range_="1d")
+        ind    = ScreenerIndicator(raw_df)
+        result = ind.run()
+        result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+        s      = ind.summary_dict()
+
+        # ── Buy score (0-8) ──────────────────────────────────────────────────
+        buy_score = sum([
+            bool(s.get("signal_red_to_green")),
+            bool(s.get("confirmed_rise")) or bool(s.get("explosive_rise")),
+            bool(s.get("parabolic_rise")),
+            bool(s.get("basic_rise")),
+            bool(s.get("all_green")),
+            int(s.get("don_main", 0)) == 1,
+            float(s.get("vwap_dev_pct") or 0) > 0,
+            bool(s.get("escape")),
+        ])
+
+        # ── Sell score (0-6) ─────────────────────────────────────────────────
+        sell_score = sum([
+            bool(s.get("signal_green_to_red")),
+            bool(s.get("major_fall")),
+            bool(s.get("all_red")),
+            int(s.get("don_main", 0)) == -1,
+            float(s.get("vwap_dev_pct") or 0) < 0,
+            bool(s.get("crash_risk")),
+        ])
+
+        close     = s.get("close")
+        vwap      = s.get("vwap")
+        vwap_dev  = s.get("vwap_dev_pct")
+        chg_pct   = round((close - vwap) / vwap * 100, 2) if close and vwap else None
+
+        return {
+            "ticker":        ticker,
+            "close":         close,
+            "vwap":          vwap,
+            "vwap_dev_pct":  vwap_dev,
+            "chg_vs_vwap":   chg_pct,
+            "daily_vol":     s.get("daily_vol"),
+            "don_main":      s.get("don_main"),
+            "all_green":     s.get("all_green"),
+            "all_red":       s.get("all_red"),
+            "confirmed_rise":s.get("confirmed_rise"),
+            "explosive_rise":s.get("explosive_rise"),
+            "parabolic_rise":s.get("parabolic_rise"),
+            "major_fall":    s.get("major_fall"),
+            "crash_risk":    s.get("crash_risk"),
+            "escape":        s.get("escape"),
+            "signal_r2g":    s.get("signal_red_to_green"),
+            "signal_g2r":    s.get("signal_green_to_red"),
+            "buy_score":     buy_score,
+            "sell_score":    sell_score,
+            "error":         None,
+        }
+    except Exception as exc:
+        return {"ticker": ticker, "error": str(exc),
+                "buy_score": 0, "sell_score": 0}
+
+
+@app.route("/scan")
+def run_scan():
+    """
+    Scan all symbols concurrently and return ranked buy/sell lists.
+    Params:
+      interval  : 1m 5m 15m   (default 1m)
+      top_n     : int          (default 10)
+    """
+    import concurrent.futures
+    interval = request.args.get("interval", "1m")
+    top_n    = int(request.args.get("top_n", 10))
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(_score_symbol, sym, interval): sym for sym in SCAN_SYMBOLS}
+        for fut in concurrent.futures.as_completed(futures):
+            results.append(fut.result())
+
+    ok = [r for r in results if not r.get("error")]
+
+    top_buy  = sorted(ok, key=lambda x: x["buy_score"],  reverse=True)[:top_n]
+    top_sell = sorted(ok, key=lambda x: x["sell_score"], reverse=True)[:top_n]
+
+    return jsonify({
+        "scanned":   len(results),
+        "errors":    len(results) - len(ok),
+        "interval":  interval,
+        "top_buy":   top_buy,
+        "top_sell":  top_sell,
+    })
 
 # ═══════════════════════════════════════════════════════════
 # RENKO ENGINE
