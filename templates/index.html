@@ -196,6 +196,52 @@
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+  /* ── REPLAY TAB ── */
+  #replay-panel { flex: 1; overflow: hidden; flex-direction: column; background: #0d1117; }
+
+  #replay-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 14px; background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
+  }
+  #replay-toolbar label { font-size: 12px; color: #8b949e; }
+
+  .rpl-btn {
+    padding: 5px 14px; border-radius: 6px; border: none;
+    font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity .15s;
+  }
+  .rpl-btn:disabled { opacity: .35; cursor: not-allowed; }
+  #rpl-load-btn  { background: #1f6feb; color: #fff; }
+  #rpl-play-btn  { background: #1a7a3a; color: #fff; min-width: 80px; }
+  #rpl-stop-btn  { background: #7a1a1a; color: #fff; }
+  #rpl-reset-btn { background: #21262d; color: #c9d1d9; }
+
+  #rpl-speed-sel { min-width: 90px; }
+
+  #rpl-progress-wrap {
+    flex: 1; height: 6px; background: #21262d; border-radius: 3px;
+    overflow: hidden; min-width: 120px; cursor: pointer;
+  }
+  #rpl-progress-bar { height: 100%; width: 0%; background: #1f6feb; pointer-events: none; transition: width .1s; }
+
+  #rpl-time-label {
+    font-size: 12px; font-weight: 700; color: #ffd700;
+    min-width: 50px; text-align: center;
+  }
+  #rpl-candle-label { font-size: 11px; color: #8b949e; white-space: nowrap; }
+
+  #replay-canvas-wrap {
+    flex: 1; overflow: hidden; position: relative; display: flex; flex-direction: column;
+  }
+  #rpl-canvas { display: block; width: 100%; height: 100%; }
+
+  #rpl-info-bar {
+    position: absolute; top: 8px; left: 12px;
+    display: flex; gap: 16px; pointer-events: none;
+  }
+  .rpl-info-item { font-size: 11px; }
+  .rpl-info-item span { font-weight: 700; }
+
 </style>
 </head>
 <body>
@@ -239,6 +285,7 @@
 <div id="tab-bar">
   <button class="tab-btn active" onclick="switchTab('chart')">📊 Chart</button>
   <button class="tab-btn"        onclick="switchTab('scanner')">🔍 Scanner</button>
+  <button class="tab-btn"        onclick="switchTab('replay')">▶ Replay</button>
 </div>
 
 <!-- CHART TAB -->
@@ -343,11 +390,12 @@
             <th>VWAP Dev%</th>
             <th>Volume</th>
             <th>Signals</th>
+            <th>Signal Time</th>
             <th>Score</th>
           </tr>
         </thead>
         <tbody id="buy-tbody">
-          <tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
+          <tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
         </tbody>
       </table>
     </div>
@@ -367,17 +415,50 @@
             <th>VWAP Dev%</th>
             <th>Volume</th>
             <th>Signals</th>
+            <th>Signal Time</th>
             <th>Score</th>
           </tr>
         </thead>
         <tbody id="sell-tbody">
-          <tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
+          <tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
   <div id="scan-status">Ready — press Run Scanner to begin</div>
+</div>
+
+
+<!-- REPLAY TAB -->
+<div id="replay-panel" class="tab-panel">
+  <div id="replay-toolbar">
+    <button class="rpl-btn" id="rpl-load-btn"  onclick="rplLoad()">📥 Load Data</button>
+    <button class="rpl-btn" id="rpl-play-btn"  onclick="rplPlayPause()" disabled>▶ Play</button>
+    <button class="rpl-btn" id="rpl-stop-btn"  onclick="rplStop()"      disabled>⏹ Stop</button>
+    <button class="rpl-btn" id="rpl-reset-btn" onclick="rplReset()"     disabled>⏮ Reset</button>
+    <label>Speed</label>
+    <select id="rpl-speed-sel">
+      <option value="800">0.5×  slow</option>
+      <option value="400" selected>1×  normal</option>
+      <option value="200">2×  fast</option>
+      <option value="80">5×  faster</option>
+      <option value="30">10× ultra</option>
+      <option value="5">50× turbo</option>
+    </select>
+    <span id="rpl-time-label">--:--</span>
+    <div id="rpl-progress-wrap" onclick="rplSeek(event)">
+      <div id="rpl-progress-bar"></div>
+    </div>
+    <span id="rpl-candle-label">0 / 0 candles</span>
+  </div>
+
+  <div id="replay-canvas-wrap">
+    <canvas id="rpl-canvas"></canvas>
+    <div id="rpl-info-bar">
+      <div class="rpl-info-item" id="rpl-ohlcv" style="color:#c9d1d9"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -577,12 +658,16 @@ function scoreBar(score, max, type) {
 
 function renderScanTable(tbody, rows, type) {
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:20px">No results</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:20px">No results</td></tr>`;
     return;
   }
   const maxScore = Math.max(...rows.map(r => type === 'buy' ? r.buy_score : r.sell_score), 1);
   tbody.innerHTML = rows.map((r, i) => {
-    const score  = type === 'buy' ? r.buy_score : r.sell_score;
+    const score    = type === 'buy' ? r.buy_score : r.sell_score;
+    const sigTime  = type === 'buy' ? r.buy_signal_time : r.sell_signal_time;
+    const timeStr  = sigTime
+      ? `<span style="color:#ffd700;font-weight:700">⏰ ${sigTime}</span>`
+      : '<span style="color:#8b949e">—</span>';
     const devVal = r.vwap_dev_pct;
     const devStr = devVal !== null && devVal !== undefined
       ? `<span style="color:${devVal > 0 ? '#26a641' : '#f85149'}">${Number(devVal).toFixed(2)}%</span>`
@@ -595,6 +680,7 @@ function renderScanTable(tbody, rows, type) {
       <td>${devStr}</td>
       <td style="color:#ffa657">${r.daily_vol || '—'}</td>
       <td>${sigTags(r, type)}</td>
+      <td>${timeStr}</td>
       <td>${scoreBar(score, maxScore, type)}</td>
     </tr>`;
   }).join('');
@@ -614,8 +700,8 @@ async function runScanner() {
   $('scan-progress-wrap').style.display = 'block';
   $('scan-progress-bar').style.width = '10%';
   $('scan-status').textContent = `⏳ Scanning ${SYMBOLS.length} symbols…`;
-  $('buy-tbody').innerHTML  = `<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
-  $('sell-tbody').innerHTML = `<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
+  $('buy-tbody').innerHTML  = `<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
+  $('sell-tbody').innerHTML = `<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
 
   // Animate progress
   let prog = 10;
@@ -653,6 +739,368 @@ async function runScanner() {
 }
 
 buildList('');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPLAY ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+const RPL = {
+  allCandles: [],    // full session candles
+  visible:    [],    // candles drawn so far
+  cursor:     0,     // next index to draw
+  timer:      null,
+  playing:    false,
+  canvas:     null,
+  ctx:        null,
+
+  // chart viewport
+  PAD_L: 60, PAD_R: 10, PAD_T: 30, PAD_B: 36,
+
+  init() {
+    this.canvas = document.getElementById('rpl-canvas');
+    this.ctx    = this.canvas.getContext('2d');
+    this._resize();
+    window.addEventListener('resize', () => { this._resize(); this._draw(); });
+    // Mouse hover info
+    this.canvas.addEventListener('mousemove', e => this._hover(e));
+  },
+
+  _resize() {
+    const wrap = document.getElementById('replay-canvas-wrap');
+    this.canvas.width  = wrap.clientWidth;
+    this.canvas.height = wrap.clientHeight;
+  },
+
+  _speed() { return parseInt(document.getElementById('rpl-speed-sel').value, 10); },
+
+  // ── Load ──────────────────────────────────────────────────────────────────
+  async load(ticker) {
+    document.getElementById('rpl-play-btn').disabled  = true;
+    document.getElementById('rpl-stop-btn').disabled  = true;
+    document.getElementById('rpl-reset-btn').disabled = true;
+    document.getElementById('rpl-candle-label').textContent = 'Loading…';
+
+    const res  = await fetch(`/history/${ticker}?range=1d&interval=1m`);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+
+    // Filter 09:15 – 15:30 IST
+    this.allCandles = json.data.filter(d => {
+      const t = d.date.slice(11); // "HH:MM"
+      return t >= '09:15' && t <= '15:30';
+    });
+
+    if (!this.allCandles.length) throw new Error('No session candles found');
+
+    this.visible = [];
+    this.cursor  = 0;
+    this._draw();
+    this._updateUI();
+
+    document.getElementById('rpl-play-btn').disabled  = false;
+    document.getElementById('rpl-reset-btn').disabled = false;
+  },
+
+  // ── Play / Pause ──────────────────────────────────────────────────────────
+  playPause() {
+    if (!this.allCandles.length) return;
+    if (this.playing) { this._pause(); } else { this._play(); }
+  },
+
+  _play() {
+    if (this.cursor >= this.allCandles.length) this.cursor = 0; // restart from top
+    this.playing = true;
+    document.getElementById('rpl-play-btn').textContent  = '⏸ Pause';
+    document.getElementById('rpl-stop-btn').disabled = false;
+    this._tick();
+  },
+
+  _pause() {
+    this.playing = false;
+    clearTimeout(this.timer);
+    document.getElementById('rpl-play-btn').textContent = '▶ Play';
+  },
+
+  _tick() {
+    if (!this.playing) return;
+    if (this.cursor < this.allCandles.length) {
+      this.visible.push(this.allCandles[this.cursor]);
+      this.cursor++;
+      this._draw();
+      this._updateUI();
+      this.timer = setTimeout(() => this._tick(), this._speed());
+    } else {
+      // Reached end
+      this._pause();
+      document.getElementById('rpl-play-btn').textContent = '▶ Play';
+    }
+  },
+
+  // ── Stop ──────────────────────────────────────────────────────────────────
+  stop() {
+    this._pause();
+    this.visible  = [];
+    this.cursor   = 0;
+    this._draw();
+    this._updateUI();
+    document.getElementById('rpl-stop-btn').disabled = true;
+  },
+
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  reset() {
+    this._pause();
+    this.visible = [];
+    this.cursor  = 0;
+    this._draw();
+    this._updateUI();
+  },
+
+  // ── Seek (click on progress bar) ─────────────────────────────────────────
+  seek(pct) {
+    if (!this.allCandles.length) return;
+    const idx    = Math.round(pct * this.allCandles.length);
+    this.cursor  = Math.min(idx, this.allCandles.length);
+    this.visible = this.allCandles.slice(0, this.cursor);
+    this._draw();
+    this._updateUI();
+  },
+
+  // ── UI state ──────────────────────────────────────────────────────────────
+  _updateUI() {
+    const total = this.allCandles.length;
+    const cur   = this.cursor;
+    document.getElementById('rpl-candle-label').textContent = `${cur} / ${total} candles`;
+    const pct = total ? (cur / total) * 100 : 0;
+    document.getElementById('rpl-progress-bar').style.width = pct + '%';
+    const timeStr = (this.visible.length > 0)
+      ? this.visible[this.visible.length - 1].date.slice(11, 16)
+      : '--:--';
+    document.getElementById('rpl-time-label').textContent = timeStr;
+  },
+
+  // ── Draw ──────────────────────────────────────────────────────────────────
+  _draw() {
+    const cv  = this.canvas;
+    const ctx = this.ctx;
+    const W   = cv.width, H = cv.height;
+    const PL  = this.PAD_L, PR = this.PAD_R, PT = this.PAD_T, PB = this.PAD_B;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, W, H);
+
+    if (!this.visible.length) {
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '14px Segoe UI';
+      ctx.textAlign = 'center';
+      ctx.fillText('Press ▶ Play to start replay', W / 2, H / 2);
+      ctx.textAlign = 'left';
+
+      // Draw session time axis hint
+      this._drawAxes(W, H, PL, PR, PT, PB, null, null);
+      return;
+    }
+
+    const candles = this.visible;
+    const n       = candles.length;
+
+    // Price range
+    let hi = -Infinity, lo = Infinity;
+    for (const c of candles) { hi = Math.max(hi, c.high); lo = Math.min(lo, c.low); }
+    const pad  = (hi - lo) * 0.08 || hi * 0.005;
+    const yMin = lo - pad, yMax = hi + pad;
+
+    const chartW = W - PL - PR;
+    const chartH = H - PT - PB;
+
+    // ── Draw grid ────────────────────────────────────────────────────────────
+    ctx.strokeStyle = '#21262d';
+    ctx.lineWidth   = 0.5;
+    const yTicks = 6;
+    ctx.font      = '10px Segoe UI';
+    ctx.fillStyle = '#8b949e';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= yTicks; i++) {
+      const frac = i / yTicks;
+      const yv   = yMax - frac * (yMax - yMin);
+      const yp   = PT + frac * chartH;
+      ctx.beginPath(); ctx.moveTo(PL, yp); ctx.lineTo(W - PR, yp); ctx.stroke();
+      ctx.fillText(yv.toFixed(2), PL - 4, yp + 3);
+    }
+    ctx.textAlign = 'left';
+
+    // ── Candle sizing ─────────────────────────────────────────────────────────
+    const TOTAL_BARS = this.allCandles.length || 375; // full session bar count
+    const rawCW = chartW / TOTAL_BARS;
+    const candleW = Math.max(1, rawCW * 0.7);
+    const halfW   = candleW / 2;
+
+    const toX = idx => PL + (idx + 0.5) * (chartW / TOTAL_BARS);
+    const toY = v  => PT + (1 - (v - yMin) / (yMax - yMin)) * chartH;
+
+    // ── Draw VWAP line ────────────────────────────────────────────────────────
+    let cumPV = 0, cumV = 0;
+    ctx.beginPath(); ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.2;
+    candles.forEach((c, i) => {
+      const hlc3 = (c.high + c.low + c.close) / 3;
+      cumPV += hlc3 * c.volume; cumV += c.volume;
+      const vwap = cumV ? cumPV / cumV : hlc3;
+      const xp = toX(i), yp = toY(vwap);
+      i === 0 ? ctx.moveTo(xp, yp) : ctx.lineTo(xp, yp);
+    });
+    ctx.stroke();
+
+    // ── Draw candles ──────────────────────────────────────────────────────────
+    candles.forEach((c, i) => {
+      const xc   = toX(i);
+      const yO   = toY(c.open), yC = toY(c.close);
+      const yH   = toY(c.high), yL = toY(c.low);
+      const bull = c.close >= c.open;
+      const col  = bull ? '#26a641' : '#f85149';
+
+      // Wick
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xc, yH); ctx.lineTo(xc, yL); ctx.stroke();
+
+      // Body
+      ctx.fillStyle = col;
+      const bodyTop = Math.min(yO, yC);
+      const bodyH   = Math.max(1, Math.abs(yC - yO));
+      ctx.fillRect(xc - halfW, bodyTop, candleW, bodyH);
+    });
+
+    // ── Current price line ─────────────────────────────────────────────────────
+    const last  = candles[candles.length - 1];
+    const lastY = toY(last.close);
+    const bull  = last.close >= last.open;
+    ctx.strokeStyle = bull ? '#26a641' : '#f85149';
+    ctx.lineWidth   = 0.8;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(PL, lastY); ctx.lineTo(W - PR, lastY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Price label on right
+    ctx.fillStyle = bull ? '#26a641' : '#f85149';
+    ctx.font      = 'bold 10px Segoe UI';
+    ctx.textAlign = 'left';
+    ctx.fillText(last.close.toFixed(2), W - PR + 2, lastY + 3);
+    ctx.textAlign = 'left';
+
+    // ── Time axis ─────────────────────────────────────────────────────────────
+    this._drawAxes(W, H, PL, PR, PT, PB, toX, candles);
+
+    // ── OHLCV info bar ─────────────────────────────────────────────────────────
+    const bull2 = last.close >= last.open;
+    document.getElementById('rpl-ohlcv').innerHTML =
+      `<span style="color:#8b949e">O</span> <span style="color:${bull2?'#26a641':'#f85149'}">${last.open.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">H</span> <span style="color:#26a641">${last.high.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">L</span> <span style="color:#f85149">${last.low.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">C</span> <span style="color:${bull2?'#26a641':'#f85149'}">${last.close.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">Vol</span> <span style="color:#ffa657">${(last.volume/1e6).toFixed(2)}M</span>`;
+  },
+
+  _drawAxes(W, H, PL, PR, PT, PB, toX, candles) {
+    const ctx = this.ctx;
+    ctx.font      = '9px Segoe UI';
+    ctx.fillStyle = '#8b949e';
+    ctx.textAlign = 'center';
+
+    // Key time marks
+    const keyTimes = ['09:15','09:30','10:00','10:30','11:00','11:30',
+                      '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+
+    if (candles && toX) {
+      keyTimes.forEach(t => {
+        const idx = candles.findIndex(c => c.date.slice(11,16) === t);
+        if (idx < 0) return;
+        const xp = toX(idx);
+        ctx.strokeStyle = '#30363d'; ctx.lineWidth = 0.5;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath(); ctx.moveTo(xp, PT); ctx.lineTo(xp, H - PB); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillText(t, xp, H - PB + 12);
+      });
+    } else {
+      // Empty state — draw dotted time labels evenly
+      const TOTAL = 375;
+      const chartW = W - PL - PR;
+      keyTimes.forEach(t => {
+        // approximate position
+        const [hh, mm] = t.split(':').map(Number);
+        const mins = (hh * 60 + mm) - (9 * 60 + 15);
+        const xp   = PL + (mins / (6 * 60 + 15)) * chartW;
+        ctx.fillText(t, xp, H - PB + 12);
+      });
+    }
+    ctx.textAlign = 'left';
+  },
+
+  // ── Hover ─────────────────────────────────────────────────────────────────
+  _hover(e) {
+    if (!this.visible.length) return;
+    const rect   = this.canvas.getBoundingClientRect();
+    const mx     = e.clientX - rect.left;
+    const chartW = this.canvas.width - this.PAD_L - this.PAD_R;
+    const TOTAL  = this.allCandles.length || 375;
+    const idx    = Math.floor((mx - this.PAD_L) / (chartW / TOTAL));
+    if (idx < 0 || idx >= this.visible.length) return;
+    const c     = this.visible[idx];
+    const bull  = c.close >= c.open;
+    document.getElementById('rpl-ohlcv').innerHTML =
+      `<span style="color:#ffd700">${c.date.slice(11,16)}</span> &nbsp;` +
+      `<span style="color:#8b949e">O</span> <span style="color:${bull?'#26a641':'#f85149'}">${c.open.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">H</span> <span style="color:#26a641">${c.high.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">L</span> <span style="color:#f85149">${c.low.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">C</span> <span style="color:${bull?'#26a641':'#f85149'}">${c.close.toFixed(2)}</span> &nbsp;` +
+      `<span style="color:#8b949e">Vol</span> <span style="color:#ffa657">${(c.volume/1e6).toFixed(2)}M</span>`;
+  },
+};
+
+// ── Replay UI functions ────────────────────────────────────────────────────────
+let rplLoaded = false;
+
+async function rplLoad() {
+  const ticker = getTicker();
+  document.getElementById('rpl-load-btn').disabled = true;
+  document.getElementById('rpl-load-btn').textContent = '⏳ Loading…';
+  try {
+    await RPL.load(ticker);
+    rplLoaded = true;
+    document.getElementById('rpl-load-btn').textContent = `✓ ${ticker.replace('.NS','')}`;
+  } catch(e) {
+    document.getElementById('rpl-load-btn').textContent = '📥 Load Data';
+    alert('Failed to load: ' + e.message);
+  } finally {
+    document.getElementById('rpl-load-btn').disabled = false;
+  }
+}
+
+function rplPlayPause() { RPL.playPause(); }
+function rplStop()      { RPL.stop(); }
+function rplReset()     { RPL.reset(); }
+function rplSeek(evt) {
+  const bar  = document.getElementById('rpl-progress-wrap');
+  const rect = bar.getBoundingClientRect();
+  const pct  = Math.max(0, Math.min(1, (evt.clientX - rect.left) / rect.width));
+  RPL.seek(pct);
+}
+
+// Init on DOM ready
+document.addEventListener('DOMContentLoaded', () => RPL.init());
+// Also init if already loaded
+if (document.readyState !== 'loading') RPL.init();
+
+// Auto-load when switching to replay tab
+const _origSwitchTab = switchTab;
+function switchTab(name) {
+  _origSwitchTab(name);
+  if (name === 'replay') {
+    // Resize canvas when tab becomes visible
+    setTimeout(() => { RPL._resize(); RPL._draw(); }, 50);
+  }
+}
+
 </script>
 </body>
 </html>
