@@ -568,6 +568,46 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
             ax_price.scatter(xs[m], df["low"].values[m]*0.9975, marker="^", color=col, s=sz, zorder=7,
                              label=col_name.replace("_"," ").title())
 
+    # ── Vol Buy / Sell signals on PRICE PANEL (from calculate_excess_combined_intraday_volume) ──
+    # vol_buy_signal  : comb crosses above smooth AND percent_diff >= +25%  → cyan ▲ below candle
+    # vol_sell_signal : comb crosses below smooth AND percent_diff <= -25%  → orange ▼ above candle
+    VOL_BUY_COL  = "#00e5ff"   # cyan
+    VOL_SELL_COL = "#ff9f00"   # amber-orange
+
+    if buy_signals.any():
+        ax_price.scatter(
+            xs[buy_signals], df["low"].values[buy_signals] * 0.9968,
+            marker="^", color=VOL_BUY_COL, s=120, zorder=11,
+            edgecolors="#ffffff", linewidths=0.4, label="Vol Buy (≥+25%)"
+        )
+        for xi in xs[buy_signals]:
+            pv = pct_diff_vals[xi]
+            lbl = f"+{pv:.0f}%" if np.isfinite(pv) else "Buy"
+            ax_price.annotate(
+                lbl, (xi, df["low"].values[xi] * 0.9968),
+                textcoords="offset points", xytext=(0, -9),
+                ha="center", va="top", fontsize=6.5, color=VOL_BUY_COL, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.18", fc="#0d1117", ec=VOL_BUY_COL, lw=0.5, alpha=0.9),
+                zorder=12,
+            )
+
+    if sell_signals.any():
+        ax_price.scatter(
+            xs[sell_signals], df["high"].values[sell_signals] * 1.0032,
+            marker="v", color=VOL_SELL_COL, s=120, zorder=11,
+            edgecolors="#ffffff", linewidths=0.4, label="Vol Sell (≤-25%)"
+        )
+        for xi in xs[sell_signals]:
+            pv = pct_diff_vals[xi]
+            lbl = f"{pv:.0f}%" if np.isfinite(pv) else "Sell"
+            ax_price.annotate(
+                lbl, (xi, df["high"].values[xi] * 1.0032),
+                textcoords="offset points", xytext=(0, 9),
+                ha="center", va="bottom", fontsize=6.5, color=VOL_SELL_COL, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.18", fc="#0d1117", ec=VOL_SELL_COL, lw=0.5, alpha=0.9),
+                zorder=12,
+            )
+
     # ── Volume Surge Screen — diamond markers centred on the candle ──
     SCREEN_COL = "#ff00ff"   # bright magenta diamonds
     screen_mask = df["screen_pass"].fillna(False).values.astype(bool)
@@ -672,17 +712,19 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     ax_dev.set_xlabel("Time (IST)", color=TEXT_COL, fontsize=9)
 
     legend_handles = [
-        mlines.Line2D([], [], color=VWAP_COL,  lw=1.6,           label="VWAP"),
-        mlines.Line2D([], [], color=GRAV_COL,  lw=1.2, ls="--",  label="Gravity"),
-        mlines.Line2D([], [], color=FIB0_COL,  lw=1.0, ls=":",   label="ORB 0%"),
-        mlines.Line2D([], [], color=FIB50_COL, lw=1.0, ls=":",   label="ORB 50%"),
-        mlines.Line2D([], [], color=FIB100_COL,lw=1.0, ls=":",   label="ORB 100%"),
+        mlines.Line2D([], [], color=VWAP_COL,   lw=1.6,          label="VWAP"),
+        mlines.Line2D([], [], color=GRAV_COL,   lw=1.2, ls="--", label="Gravity"),
+        mlines.Line2D([], [], color=FIB0_COL,   lw=1.0, ls=":",  label="ORB 0%"),
+        mlines.Line2D([], [], color=FIB50_COL,  lw=1.0, ls=":",  label="ORB 50%"),
+        mlines.Line2D([], [], color=FIB100_COL, lw=1.0, ls=":",  label="ORB 100%"),
         mlines.Line2D([], [], marker="v", color=DN_COL,    lw=0, ms=7, label="G→R Flip"),
         mlines.Line2D([], [], marker="^", color=UP_COL,    lw=0, ms=7, label="R→G Flip"),
-        mlines.Line2D([], [], marker="^", color=UP_COL,    lw=0, ms=7, label="Buy Signal"),
-        mlines.Line2D([], [], marker="v", color=DN_COL,    lw=0, ms=7, label="Sell Signal"),
-        mlines.Line2D([], [], marker="D", color="#ff00ff", lw=0, ms=7, label="Vol Surge Screen",
-                      markeredgecolor="#ffffff", markeredgewidth=0.5),
+        mlines.Line2D([], [], marker="^", color="#00e5ff", lw=0, ms=8,
+                      markeredgecolor="#ffffff", markeredgewidth=0.4, label="Vol Buy (≥+25%)"),
+        mlines.Line2D([], [], marker="v", color="#ff9f00", lw=0, ms=8,
+                      markeredgecolor="#ffffff", markeredgewidth=0.4, label="Vol Sell (≤−25%)"),
+        mlines.Line2D([], [], marker="D", color="#ff00ff", lw=0, ms=7,
+                      markeredgecolor="#ffffff", markeredgewidth=0.5, label="Vol Surge Screen"),
     ]
     ax_price.legend(handles=legend_handles, loc="upper left", fontsize=7.5,
                     facecolor="#161b22", edgecolor=GRID_COL, labelcolor=TEXT_COL, ncol=2)
