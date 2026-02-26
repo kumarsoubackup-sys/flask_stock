@@ -688,24 +688,19 @@ const RPL = {
     if (w > 0 && h > 0) { cv.width = w; cv.height = h; }
   },
 
-  // ── load OHLCV from /history/ ───────────────────────────
+  // ── load OHLCV + indicators from /replay_data/ ──────────
   async load(ticker){
-    const res  = await fetch('/history/' + ticker + '?range=1d&interval=1m');
+    // Use replay_data which returns per-bar indicator values (IST-filtered)
+    const res  = await fetch('/replay_data/' + ticker + '?interval=1m');
     const json = await res.json();
     if (json.error) throw new Error(json.error);
 
-    // Keep only 09:15–15:30 IST (server now returns IST times)
-    this.candles = (json.data || []).filter(d => {
-      const t = d.date.slice(11, 16);
-      return t >= '09:15' && t <= '15:30';
-    });
-
-    if (!this.candles.length) throw new Error('No session candles (check IST filter)');
+    this.candles = json.data || [];
+    if (!this.candles.length) throw new Error('No session candles');
 
     this.cursor  = 0;
     this.playing = false;
 
-    // make sure canvas has proper size before first draw
     this.resize();
     this.draw();
     this.syncUI();
@@ -840,17 +835,52 @@ const RPL = {
     }
     ctx.textAlign = 'left';
 
-    // ── VWAP line ──────────────────────────────────────────
-    let cumPV = 0, cumV = 0;
+    // ── VWAP line (from indicator data, fallback to computed) ──
     ctx.beginPath(); ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5;
+    let cumPV = 0, cumV = 0;
     visible.forEach((c, i) => {
-      const hlc3 = (c.high + c.low + c.close) / 3;
-      cumPV += hlc3 * c.volume; cumV += c.volume;
-      const vwap = cumV ? cumPV / cumV : hlc3;
+      let vwap = c.vwap;
+      if (vwap == null) {                        // fallback: compute inline
+        const hlc3 = (c.high + c.low + c.close) / 3;
+        cumPV += hlc3 * c.volume; cumV += c.volume;
+        vwap = cumV ? cumPV / cumV : hlc3;
+      }
       const xp = toX(i), yp = toY(vwap);
       i === 0 ? ctx.moveTo(xp, yp) : ctx.lineTo(xp, yp);
     });
     ctx.stroke();
+
+    // ── Gravity / CoG line ─────────────────────────────────
+    let gravStarted = false;
+    ctx.beginPath(); ctx.strokeStyle = '#d2a8ff'; ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 3]);
+    visible.forEach((c, i) => {
+      if (c.gravity == null) return;
+      const xp = toX(i), yp = toY(c.gravity);
+      if (!gravStarted) { ctx.moveTo(xp, yp); gravStarted = true; }
+      else ctx.lineTo(xp, yp);
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // ── ORB levels (horizontal lines from first bar that has them) ─
+    const orbBar = visible.find(c => c.fib0 != null);
+    if (orbBar) {
+      const orbLevels = [
+        { v: orbBar.fib0,   col: '#3fb950', lbl: 'ORB H' },
+        { v: orbBar.fib50,  col: '#58a6ff', lbl: 'ORB M' },
+        { v: orbBar.fib100, col: '#f85149', lbl: 'ORB L' },
+      ];
+      orbLevels.forEach(({ v, col, lbl }) => {
+        if (v == null) return;
+        const yp = toY(v);
+        ctx.strokeStyle = col; ctx.lineWidth = 0.8;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.moveTo(PL, yp); ctx.lineTo(W - PR, yp); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col; ctx.font = '9px Segoe UI,sans-serif';
+        ctx.fillText(lbl + ' ' + v.toFixed(2), W - PR - 56, yp - 2);
+      });
+    }
 
     // ── candles ────────────────────────────────────────────
     visible.forEach((c, i) => {
@@ -858,14 +888,43 @@ const RPL = {
       const bull = c.close >= c.open;
       const col  = bull ? '#26a641' : '#f85149';
       const yO=toY(c.open), yC=toY(c.close), yH=toY(c.high), yL=toY(c.low);
-
-      // wick
       ctx.strokeStyle = col; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xc, yH); ctx.lineTo(xc, yL); ctx.stroke();
-
-      // body
       ctx.fillStyle = col;
       ctx.fillRect(xc - hw, Math.min(yO,yC), candleW, Math.max(1, Math.abs(yC-yO)));
+    });
+
+    // ── signal markers ─────────────────────────────────────
+    // Draw above/below candles using marker characters
+    const SIG_R = Math.max(4, candleW * 1.6);   // marker radius
+    visible.forEach((c, i) => {
+      const xc = toX(i);
+
+      // ── BUY signals → below candle ─────────────────────
+      const buyY = toY(c.low) + SIG_R + 4;
+      if (c.signal_r2g) {
+        _drawMarker(ctx, xc, buyY, '▲', '#26a641', SIG_R * 2, 'bold');
+      } else if (c.parabolic_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#ffd700', SIG_R * 1.8, 'bold');
+      } else if (c.explosive_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#58a6ff', SIG_R * 1.6, '');
+      } else if (c.confirmed_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#3fb950', SIG_R * 1.4, '');
+      } else if (c.basic_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#8b949e', SIG_R * 1.2, '');
+      } else if (c.escape) {
+        _drawMarker(ctx, xc, buyY, '◆', '#d2a8ff', SIG_R * 1.4, 'bold');
+      }
+
+      // ── SELL signals → above candle ────────────────────
+      const sellY = toY(c.high) - SIG_R - 4;
+      if (c.signal_g2r) {
+        _drawMarker(ctx, xc, sellY, '▼', '#f85149', SIG_R * 2, 'bold');
+      } else if (c.crash_risk) {
+        _drawMarker(ctx, xc, sellY, '▼', '#ff7b72', SIG_R * 1.8, 'bold');
+      } else if (c.major_fall) {
+        _drawMarker(ctx, xc, sellY, '▼', '#ffa657', SIG_R * 1.6, '');
+      }
     });
 
     // ── current price line ─────────────────────────────────
@@ -883,15 +942,29 @@ const RPL = {
     // ── time axis ──────────────────────────────────────────
     this._timeAxis(ctx, W, H, PL, PR, PT, PB, total, toX);
 
-    // ── OHLCV info bar ─────────────────────────────────────
-    const b2 = last.close >= last.open;
+    // ── OHLCV + active signals info bar ────────────────────
+    const b2   = last.close >= last.open;
+    const sigs = [];
+    if (last.signal_r2g)     sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
+    if (last.signal_g2r)     sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
+    if (last.parabolic_rise) sigs.push('<span style="color:#ffd700">Parabolic</span>');
+    if (last.explosive_rise) sigs.push('<span style="color:#58a6ff">Explosive</span>');
+    if (last.confirmed_rise) sigs.push('<span style="color:#3fb950">Confirmed</span>');
+    if (last.basic_rise)     sigs.push('<span style="color:#8b949e">Basic↑</span>');
+    if (last.crash_risk)     sigs.push('<span style="color:#ff7b72">Crash⚠</span>');
+    if (last.major_fall)     sigs.push('<span style="color:#ffa657">MajFall</span>');
+    if (last.escape)         sigs.push('<span style="color:#d2a8ff">Escape</span>');
     document.getElementById('rpl-ohlcv').innerHTML =
       'O <b style="color:' + (b2?'#26a641':'#f85149') + '">' + last.open.toFixed(2)  + '</b>  ' +
       'H <b style="color:#26a641">'                          + last.high.toFixed(2)  + '</b>  ' +
       'L <b style="color:#f85149">'                          + last.low.toFixed(2)   + '</b>  ' +
       'C <b style="color:' + (b2?'#26a641':'#f85149') + '">' + last.close.toFixed(2) + '</b>  ' +
-      'Vol <b style="color:#ffa657">'                        + (last.volume/1e6).toFixed(2) + 'M</b>';
+      'Vol <b style="color:#ffa657">'                        + (last.volume/1e6).toFixed(2) + 'M</b>' +
+      (sigs.length ? '  &nbsp;' + sigs.join(' &nbsp;') : '');
   },
+
+  // ── marker drawing helper ─────────────────────────────────
+  // (module-level function so draw() can call it)
 
   // ── time axis with dotted rules ──────────────────────────
   _timeAxis(ctx, W, H, PL, PR, PT, PB, total, toX){
@@ -941,6 +1014,17 @@ const RPL = {
       'Vol <b style="color:#ffa657">'                       + (c.volume/1e6).toFixed(2) + 'M</b>';
   },
 };
+
+// ── Marker drawing helper (used inside RPL.draw) ────────────────────────────────
+function _drawMarker(ctx, x, y, char, color, size, weight) {
+  ctx.save();
+  ctx.fillStyle  = color;
+  ctx.font       = (weight ? weight + ' ' : '') + size + 'px Segoe UI,sans-serif';
+  ctx.textAlign  = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(char, x, y);
+  ctx.restore();
+}
 
 // ── Replay button handlers ─────────────────────────────────────────────────────
 async function rplLoad(){
