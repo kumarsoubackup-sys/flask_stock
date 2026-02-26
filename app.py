@@ -673,6 +673,9 @@ def get_history(ticker):
         interval = request.args.get("interval", "1d")
         df = fetch_ohlcv(ticker, interval=interval, range_=range_)
 
+        # Convert index to IST so time strings are correct for replay
+        df.index = _to_ist(df.index)
+
         records = []
         for ts, row in df.iterrows():
             records.append({
@@ -784,6 +787,29 @@ SCAN_SYMBOLS = [
 ]
 
 
+def _first_signal_time(result, signal_cols: list) -> str | None:
+    """
+    Walk backwards through result to find the timestamp of the most recent bar
+    where ANY of the given signal columns first became True.
+    Returns an IST time string like "10:32" or None.
+    """
+    for col in signal_cols:
+        if col not in result.columns:
+            continue
+        sig = result[col].values.astype(bool)
+        # Find the last True bar
+        idxs = [i for i in range(len(sig)) if sig[i]]
+        if not idxs:
+            continue
+        last_idx = idxs[-1]
+        ts = result.index[last_idx]
+        # Convert to IST if needed
+        if hasattr(ts, "tz_convert"):
+            ts = ts.tz_convert(IST)
+        return ts.strftime("%H:%M")
+    return None
+
+
 def _score_symbol(ticker: str, interval: str = "1m") -> dict:
     """Fetch latest data for one symbol and compute a buy/sell score."""
     try:
@@ -815,32 +841,41 @@ def _score_symbol(ticker: str, interval: str = "1m") -> dict:
             bool(s.get("crash_risk")),
         ])
 
+        # ── Signal timestamps (last bar where signal fired) ──────────────────
+        buy_signal_cols  = ["signal_red_to_green", "explosive_rise", "confirmed_rise",
+                            "parabolic_rise", "basic_rise", "escape"]
+        sell_signal_cols = ["signal_green_to_red", "major_fall", "crash_risk"]
+        buy_signal_time  = _first_signal_time(result, buy_signal_cols)
+        sell_signal_time = _first_signal_time(result, sell_signal_cols)
+
         close     = s.get("close")
         vwap      = s.get("vwap")
         vwap_dev  = s.get("vwap_dev_pct")
         chg_pct   = round((close - vwap) / vwap * 100, 2) if close and vwap else None
 
         return {
-            "ticker":        ticker,
-            "close":         close,
-            "vwap":          vwap,
-            "vwap_dev_pct":  vwap_dev,
-            "chg_vs_vwap":   chg_pct,
-            "daily_vol":     s.get("daily_vol"),
-            "don_main":      s.get("don_main"),
-            "all_green":     s.get("all_green"),
-            "all_red":       s.get("all_red"),
-            "confirmed_rise":s.get("confirmed_rise"),
-            "explosive_rise":s.get("explosive_rise"),
-            "parabolic_rise":s.get("parabolic_rise"),
-            "major_fall":    s.get("major_fall"),
-            "crash_risk":    s.get("crash_risk"),
-            "escape":        s.get("escape"),
-            "signal_r2g":    s.get("signal_red_to_green"),
-            "signal_g2r":    s.get("signal_green_to_red"),
-            "buy_score":     buy_score,
-            "sell_score":    sell_score,
-            "error":         None,
+            "ticker":          ticker,
+            "close":           close,
+            "vwap":            vwap,
+            "vwap_dev_pct":    vwap_dev,
+            "chg_vs_vwap":     chg_pct,
+            "daily_vol":       s.get("daily_vol"),
+            "don_main":        s.get("don_main"),
+            "all_green":       s.get("all_green"),
+            "all_red":         s.get("all_red"),
+            "confirmed_rise":  s.get("confirmed_rise"),
+            "explosive_rise":  s.get("explosive_rise"),
+            "parabolic_rise":  s.get("parabolic_rise"),
+            "major_fall":      s.get("major_fall"),
+            "crash_risk":      s.get("crash_risk"),
+            "escape":          s.get("escape"),
+            "signal_r2g":      s.get("signal_red_to_green"),
+            "signal_g2r":      s.get("signal_green_to_red"),
+            "buy_score":       buy_score,
+            "sell_score":      sell_score,
+            "buy_signal_time": buy_signal_time,
+            "sell_signal_time":sell_signal_time,
+            "error":           None,
         }
     except Exception as exc:
         return {"ticker": ticker, "error": str(exc),
