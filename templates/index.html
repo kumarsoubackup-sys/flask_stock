@@ -343,12 +343,11 @@
             <th>VWAP Dev%</th>
             <th>Volume</th>
             <th>Signals</th>
-            <th>Signal Time</th>
             <th>Score</th>
           </tr>
         </thead>
         <tbody id="buy-tbody">
-          <tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
+          <tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
         </tbody>
       </table>
     </div>
@@ -368,12 +367,11 @@
             <th>VWAP Dev%</th>
             <th>Volume</th>
             <th>Signals</th>
-            <th>Signal Time</th>
             <th>Score</th>
           </tr>
         </thead>
         <tbody id="sell-tbody">
-          <tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
+          <tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px">Press Run Scanner</td></tr>
         </tbody>
       </table>
     </div>
@@ -579,16 +577,12 @@ function scoreBar(score, max, type) {
 
 function renderScanTable(tbody, rows, type) {
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:20px">No results</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:20px">No results</td></tr>`;
     return;
   }
   const maxScore = Math.max(...rows.map(r => type === 'buy' ? r.buy_score : r.sell_score), 1);
   tbody.innerHTML = rows.map((r, i) => {
-    const score    = type === 'buy' ? r.buy_score : r.sell_score;
-    const sigTime  = type === 'buy' ? r.buy_signal_time : r.sell_signal_time;
-    const timeStr  = sigTime
-      ? `<span style="color:#ffd700;font-weight:700">⏰ ${sigTime}</span>`
-      : '<span style="color:#8b949e">—</span>';
+    const score  = type === 'buy' ? r.buy_score : r.sell_score;
     const devVal = r.vwap_dev_pct;
     const devStr = devVal !== null && devVal !== undefined
       ? `<span style="color:${devVal > 0 ? '#26a641' : '#f85149'}">${Number(devVal).toFixed(2)}%</span>`
@@ -601,7 +595,6 @@ function renderScanTable(tbody, rows, type) {
       <td>${devStr}</td>
       <td style="color:#ffa657">${r.daily_vol || '—'}</td>
       <td>${sigTags(r, type)}</td>
-      <td>${timeStr}</td>
       <td>${scoreBar(score, maxScore, type)}</td>
     </tr>`;
   }).join('');
@@ -621,8 +614,8 @@ async function runScanner() {
   $('scan-progress-wrap').style.display = 'block';
   $('scan-progress-bar').style.width = '10%';
   $('scan-status').textContent = `⏳ Scanning ${SYMBOLS.length} symbols…`;
-  $('buy-tbody').innerHTML  = `<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
-  $('sell-tbody').innerHTML = `<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
+  $('buy-tbody').innerHTML  = `<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
+  $('sell-tbody').innerHTML = `<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>`;
 
   // Animate progress
   let prog = 10;
