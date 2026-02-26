@@ -193,6 +193,38 @@ def calculate_excess_combined_intraday_volume(df: pd.DataFrame, smooth_bars: int
         smoothed.append(rolling_avg_variable_window(gdf['combined_volume'], gdf['bars_in_day'], smooth_bars))
     df['smoothed_volume'] = pd.concat(smoothed)
 
+    # ── percent_diff ─────────────────────────────────────────────────────────
+    # percent_diff = ((combined_volume - smoothed_volume) / abs(smoothed_volume)) * 100
+    # Returns NaN when smoothed_volume == 0 (equivalent to `na` in Pine Script)
+    denom = df['smoothed_volume'].replace(0, np.nan).abs()
+    df['percent_diff'] = ((df['combined_volume'] - df['smoothed_volume']) / denom) * 100.0
+
+    # ── crossover / crossunder detection ────────────────────────────────────
+    comb   = df['combined_volume'].values
+    smooth = df['smoothed_volume'].values
+    pct    = df['percent_diff'].values
+
+    n = len(df)
+    vol_buy  = np.zeros(n, dtype=bool)
+    vol_sell = np.zeros(n, dtype=bool)
+
+    for i in range(1, n):
+        # crossover  : prev bar comb <= smooth, current bar comb > smooth
+        crossover  = (comb[i-1] <= smooth[i-1]) and (comb[i] > smooth[i])
+        # crossunder : prev bar comb >= smooth, current bar comb < smooth
+        crossunder = (comb[i-1] >= smooth[i-1]) and (comb[i] < smooth[i])
+
+        pd_val = pct[i]
+        pd_ok  = not np.isnan(pd_val)
+
+        # BUY  : crossover  AND percent_diff >= +25%
+        vol_buy[i]  = crossover  and pd_ok and pd_val >= 25.0
+        # SELL : crossunder AND percent_diff <= -25%
+        vol_sell[i] = crossunder and pd_ok and pd_val <= -25.0
+
+    df['vol_buy_signal']  = vol_buy
+    df['vol_sell_signal'] = vol_sell
+
     df.drop(columns=['date','is_new_day','is_up_bar','is_down_bar',
                       'day_group','bars_in_day','buy_vol_increment','sel_vol_increment'], inplace=True)
     return df
@@ -426,6 +458,10 @@ class ScreenerIndicator:
             "crash_risk":          bool(last.get("crash_risk", False)),
             "signal_green_to_red": bool(last.get("signal_green_to_red", False)),
             "signal_red_to_green": bool(last.get("signal_red_to_green", False)),
+            # Volume crossover signals
+            "percent_diff":        _f("percent_diff"),
+            "vol_buy_signal":      bool(last.get("vol_buy_signal",  False)),
+            "vol_sell_signal":     bool(last.get("vol_sell_signal", False)),
         }
 
 
@@ -461,24 +497,18 @@ def apply_screen(df: pd.DataFrame, min_volume: int = 6_000_000) -> pd.DataFrame:
 def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     """Build the 3-panel chart and return it as a PNG BytesIO buffer."""
 
-    comb_vals   = df["combined_volume"].values
-    smooth_vals = df["smoothed_volume"].values
-    vwap_dev    = df["vwap_dev"].values   # positive = price above VWAP, negative = below
+    comb_vals     = df["combined_volume"].values
+    smooth_vals   = df["smoothed_volume"].values
+    vwap_dev      = df["vwap_dev"].values   # positive = price above VWAP, negative = below
 
     # ── Signal logic ──────────────────────────────────────────────────────────
-    # BUY  : crossover  (combined crosses above smoothed) AND combined > 0 AND vwap_dev > 0
-    # SELL : crossunder (combined crosses below smoothed) AND combined < 0 AND vwap_dev < 0
+    # Signals come from calculate_excess_combined_intraday_volume:
+    #   vol_buy_signal  : comb crosses above smooth AND percent_diff >= +25%
+    #   vol_sell_signal : comb crosses below smooth AND percent_diff <= -25%
     # ─────────────────────────────────────────────────────────────────────────
-    buy_signals  = [False]
-    sell_signals = [False]
-    for i in range(1, len(df)):
-        crossover  = comb_vals[i-1] <= smooth_vals[i-1] and comb_vals[i] > smooth_vals[i]
-        crossunder = comb_vals[i-1] >= smooth_vals[i-1] and comb_vals[i] < smooth_vals[i]
-
-        buy_signals.append(crossover  and comb_vals[i] > 0 and vwap_dev[i] > 0)
-        sell_signals.append(crossunder and comb_vals[i] < 0 and vwap_dev[i] < 0)
-    buy_signals  = np.array(buy_signals)
-    sell_signals = np.array(sell_signals)
+    buy_signals   = df["vol_buy_signal"].fillna(False).values.astype(bool)
+    sell_signals  = df["vol_sell_signal"].fillna(False).values.astype(bool)
+    pct_diff_vals = df["percent_diff"].values
 
     xs = np.arange(len(df))
 
@@ -589,22 +619,36 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     ax_excess.plot(xs, smooth_vals, color=SMOOTH_COL, lw=1.5, label=f"Smoothed ({EXCESS_SMOOTH_BARS}b)")
     ax_excess.axhline(0, color=TEXT_COL, lw=0.8)
 
+    # Percent diff on twin axis (right side)
+    ax_pct = ax_excess.twinx()
+    valid_pct = np.where(np.isfinite(pct_diff_vals), pct_diff_vals, np.nan)
+    ax_pct.plot(xs, valid_pct, color="#ffa657", lw=0.8, alpha=0.6, label="% Diff")
+    ax_pct.axhline( 25, color=UP_COL, lw=0.6, ls="--", alpha=0.5)
+    ax_pct.axhline(-25, color=DN_COL, lw=0.6, ls="--", alpha=0.5)
+    ax_pct.set_ylabel("% Diff", color="#ffa657", fontsize=7)
+    ax_pct.tick_params(colors="#ffa657", labelsize=7)
+    ax_pct.yaxis.label.set_color("#ffa657")
+
     if buy_signals.any():
-        ax_excess.scatter(xs[buy_signals],  comb_vals[buy_signals],  marker="^", color=UP_COL, s=100, zorder=10, label="Buy")
+        ax_excess.scatter(xs[buy_signals],  comb_vals[buy_signals],  marker="^", color=UP_COL, s=100, zorder=10, label="Vol Buy")
         for xi in xs[buy_signals]:
+            pct_val = pct_diff_vals[xi]
+            pct_str = f"{pct_val:+.0f}%" if np.isfinite(pct_val) else ""
             t_label = df.index[xi].strftime("%H:%M")
             ax_excess.annotate(
-                t_label, (xi, comb_vals[xi]),
+                f"{t_label}\n{pct_str}", (xi, comb_vals[xi]),
                 textcoords="offset points", xytext=(0, 8),
                 ha="center", va="bottom", fontsize=6.5, color=UP_COL,
                 bbox=dict(boxstyle="round,pad=0.15", fc="#0d1117", ec=UP_COL, lw=0.4, alpha=0.85)
             )
     if sell_signals.any():
-        ax_excess.scatter(xs[sell_signals], comb_vals[sell_signals], marker="v", color=DN_COL, s=100, zorder=10, label="Sell")
+        ax_excess.scatter(xs[sell_signals], comb_vals[sell_signals], marker="v", color=DN_COL, s=100, zorder=10, label="Vol Sell")
         for xi in xs[sell_signals]:
+            pct_val = pct_diff_vals[xi]
+            pct_str = f"{pct_val:+.0f}%" if np.isfinite(pct_val) else ""
             t_label = df.index[xi].strftime("%H:%M")
             ax_excess.annotate(
-                t_label, (xi, comb_vals[xi]),
+                f"{t_label}\n{pct_str}", (xi, comb_vals[xi]),
                 textcoords="offset points", xytext=(0, -8),
                 ha="center", va="top", fontsize=6.5, color=DN_COL,
                 bbox=dict(boxstyle="round,pad=0.15", fc="#0d1117", ec=DN_COL, lw=0.4, alpha=0.85)
@@ -758,6 +802,10 @@ def get_replay_data(ticker):
                 "parabolic_rise":  bool(row.get("parabolic_rise", False)),
                 "escape":          bool(row.get("escape",      False)),
                 "crash_risk":      bool(row.get("crash_risk",  False)),
+                # volume crossover signals
+                "percent_diff":    _fv(row.get("percent_diff")),
+                "vol_buy_signal":  bool(row.get("vol_buy_signal",  False)),
+                "vol_sell_signal": bool(row.get("vol_sell_signal", False)),
             })
 
         return jsonify({"ticker": ticker.upper(), "bars": len(bars), "data": bars})
