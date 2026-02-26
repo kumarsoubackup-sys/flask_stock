@@ -253,7 +253,8 @@
   </select>
   <button class="btn btn-blue" id="btn-load" onclick="loadAll()">Load</button>
   <button class="btn btn-gray" onclick="loadChart()">Chart Only</button>
-  <span id="countdown">⏱ 60s</span>
+  <span id="countdown" style="cursor:pointer" title="Click to pause/resume auto-refresh" onclick="toggleAutoRefresh()">⏱ 60s</span>
+  <button class="btn btn-gray" id="ar-btn" onclick="toggleAutoRefresh()" title="Toggle auto-refresh" style="padding:4px 10px;font-size:12px;">⏸ Auto</button>
   <span id="status">—</span>
 </div>
 
@@ -456,13 +457,11 @@ function switchTab(name) {
   if (panel) {
     panel.classList.add('active');
     if (name === 'replay') {
-      // Must defer resize until panel is visible and has layout
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          RPL.resize();
-          RPL.draw();
-        });
-      });
+      // Double rAF: wait until panel is fully painted and has real pixel dimensions
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        RPL.resize();
+        RPL.draw();
+      }));
     }
   }
 }
@@ -501,14 +500,36 @@ document.addEventListener('mousedown', e => { if(!$('ticker-wrap').contains(e.ta
 // ════════════════════════════════════════════════════════════
 const REFRESH_SECS = 60;
 let countdown = REFRESH_SECS;
+let autoRefreshOn = true;
+
 setInterval(() => {
+  if (!autoRefreshOn) return;
   $('countdown').textContent = `⏱ ${countdown}s`;
-  $('countdown').classList.toggle('ticking', countdown<=10);
+  $('countdown').classList.toggle('ticking', countdown <= 10);
   if (--countdown < 0) {
     countdown = REFRESH_SECS;
     if ($('chart-img').style.display !== 'none') loadAll(true);
   }
 }, 1000);
+
+function toggleAutoRefresh() {
+  autoRefreshOn = !autoRefreshOn;
+  const btn = $('ar-btn');
+  if (autoRefreshOn) {
+    countdown = REFRESH_SECS;
+    btn.textContent = '⏸ Auto';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    $('countdown').textContent = `⏱ ${countdown}s`;
+    $('countdown').classList.remove('ticking');
+  } else {
+    btn.textContent = '▶ Auto';
+    btn.style.color = '#f85149';
+    btn.style.borderColor = '#f85149';
+    $('countdown').textContent = '⏱ OFF';
+    $('countdown').classList.remove('ticking');
+  }
+}
 
 // ════════════════════════════════════════════════════════════
 // CHART TAB
@@ -670,120 +691,120 @@ async function runScanner(){
 // REPLAY ENGINE
 // ════════════════════════════════════════════════════════════
 const RPL = {
-  candles:  [],   // all session candles
-  cursor:   0,    // how many drawn so far
-  timer:    null,
-  playing:  false,
+  candles : [],     // all session candles (IST filtered)
+  cursor  : 0,      // number drawn so far (0 = nothing shown)
+  timer   : null,
+  playing : false,
+  PL:62, PR:18, PT:28, PB:34,  // canvas padding
 
-  // Layout pads
-  PL: 62, PR: 14, PT: 28, PB: 32,
+  // ── helpers ─────────────────────────────────────────────
+  cv ()  { return document.getElementById('rpl-canvas'); },
+  ctx()  { return this.cv().getContext('2d'); },
+  speed(){ return parseInt(document.getElementById('rpl-speed-sel').value, 10); },
 
-  // ── Canvas setup ──────────────────────────────────────────
-  canvas(){ return document.getElementById('rpl-canvas'); },
-  ctx(){    return this.canvas().getContext('2d'); },
-
+  // ── resize canvas to its container ──────────────────────
   resize(){
-    const cv  = this.canvas();
+    const cv  = this.cv();
     const bod = document.getElementById('replay-body');
-    cv.width  = bod.clientWidth  || 800;
-    cv.height = bod.clientHeight || 500;
+    const w   = bod.offsetWidth;
+    const h   = bod.offsetHeight;
+    if (w > 0 && h > 0) { cv.width = w; cv.height = h; }
   },
 
-  // ── Speed ─────────────────────────────────────────────────
-  speed(){ return parseInt($('rpl-speed-sel').value, 10); },
-
-  // ── Load candles ──────────────────────────────────────────
+  // ── load OHLCV + indicators from /replay_data/ ──────────
   async load(ticker){
-    const res  = await fetch(`/history/${ticker}?range=1d&interval=1m`);
+    // Use replay_data which returns per-bar indicator values (IST-filtered)
+    const res  = await fetch('/replay_data/' + ticker + '?interval=1m');
     const json = await res.json();
     if (json.error) throw new Error(json.error);
 
-    // Filter 09:15–15:30 IST
-    this.candles = json.data.filter(d => {
-      const t = d.date.slice(11,16);
-      return t >= '09:15' && t <= '15:30';
-    });
+    this.candles = json.data || [];
     if (!this.candles.length) throw new Error('No session candles');
 
     this.cursor  = 0;
     this.playing = false;
+
+    this.resize();
     this.draw();
-    this.ui();
+    this.syncUI();
+    return this.candles.length;
   },
 
-  // ── Play / Pause ──────────────────────────────────────────
+  // ── play / pause toggle ──────────────────────────────────
   playPause(){
     if (!this.candles.length) return;
-    if (this.playing) { this.pause(); }
-    else {
-      if (this.cursor >= this.candles.length) this.cursor = 0; // restart
+    if (this.playing) {
+      this.pause();
+    } else {
+      if (this.cursor >= this.candles.length) this.cursor = 0;
       this.playing = true;
-      $('rpl-play-btn').textContent = '⏸ Pause';
-      $('rpl-stop-btn').disabled    = false;
-      this.tick();
+      document.getElementById('rpl-play-btn').textContent = '⏸ Pause';
+      document.getElementById('rpl-stop-btn').disabled    = false;
+      this._tick();
     }
   },
 
   pause(){
     this.playing = false;
     clearTimeout(this.timer);
-    $('rpl-play-btn').textContent = '▶ Play';
+    document.getElementById('rpl-play-btn').textContent = '▶ Play';
   },
 
-  tick(){
+  _tick(){
     if (!this.playing) return;
     if (this.cursor < this.candles.length) {
       this.cursor++;
       this.draw();
-      this.ui();
-      this.timer = setTimeout(() => this.tick(), this.speed());
+      this.syncUI();
+      this.timer = setTimeout(() => this._tick(), this.speed());
     } else {
-      this.pause();
+      this.pause();   // reached end
     }
   },
 
-  // ── Stop / Reset ──────────────────────────────────────────
+  // ── stop: pause + go to start ───────────────────────────
   stop(){
     this.pause();
     this.cursor = 0;
     this.draw();
-    this.ui();
-    $('rpl-stop-btn').disabled = true;
+    this.syncUI();
+    document.getElementById('rpl-stop-btn').disabled = true;
   },
 
+  // ── reset: pause + rewind ───────────────────────────────
   reset(){
     this.pause();
     this.cursor = 0;
     this.draw();
-    this.ui();
+    this.syncUI();
   },
 
-  // ── Seek ──────────────────────────────────────────────────
-  seek(pct){
+  // ── seek by fraction 0-1 ────────────────────────────────
+  seek(frac){
     if (!this.candles.length) return;
-    this.cursor = Math.round(pct * this.candles.length);
+    this.cursor = Math.round(frac * this.candles.length);
     this.cursor = Math.max(0, Math.min(this.cursor, this.candles.length));
     this.draw();
-    this.ui();
+    this.syncUI();
   },
 
-  // ── UI state update ───────────────────────────────────────
-  ui(){
-    const total = this.candles.length, cur = this.cursor;
-    $('rpl-candle-label').textContent = `${cur} / ${total}`;
-    $('rpl-progress-bar').style.width = total ? (cur/total*100)+'%' : '0%';
-    const last = cur > 0 ? this.candles[cur-1] : null;
-    $('rpl-time-label').textContent = last ? last.date.slice(11,16) : '--:--';
-
-    // enable buttons
-    $('rpl-play-btn').disabled  = total === 0;
-    $('rpl-reset-btn').disabled = total === 0;
+  // ── sync progress bar / time label / counters ───────────
+  syncUI(){
+    const total = this.candles.length;
+    const cur   = this.cursor;
+    document.getElementById('rpl-candle-label').textContent = cur + ' / ' + total;
+    document.getElementById('rpl-progress-bar').style.width = (total ? cur/total*100 : 0) + '%';
+    const last = cur > 0 ? this.candles[cur - 1] : null;
+    document.getElementById('rpl-time-label').textContent = last ? last.date.slice(11,16) : '--:--';
+    document.getElementById('rpl-play-btn').disabled  = total === 0;
+    document.getElementById('rpl-reset-btn').disabled = total === 0;
   },
 
-  // ── Draw all candles up to cursor ─────────────────────────
+  // ── main draw routine ────────────────────────────────────
   draw(){
-    const cv = this.canvas(), ctx = this.ctx();
+    const cv  = this.cv(), ctx = this.ctx();
     const W = cv.width, H = cv.height;
+    if (!W || !H) return;               // guard: canvas not yet laid out
     const {PL,PR,PT,PB} = this;
     const chartW = W - PL - PR;
     const chartH = H - PT - PB;
@@ -791,158 +812,242 @@ const RPL = {
     ctx.fillStyle = '#0d1117';
     ctx.fillRect(0, 0, W, H);
 
+    const total   = this.candles.length;
     const visible = this.candles.slice(0, this.cursor);
-    const total   = this.candles.length;   // full session bar count (e.g. 315)
 
-    // Empty state
+    // ── empty / no-data state ─────────────────────────────
     if (!visible.length) {
       ctx.fillStyle = '#8b949e';
-      ctx.font = '14px Segoe UI, sans-serif';
+      ctx.font      = '14px Segoe UI,sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(
-        total ? `Press ▶ Play — ${total} candles loaded` : 'Press 📥 Load Data to begin',
+        total ? ('Press ▶ Play — ' + total + ' candles loaded') : 'Press 📥 Load Data to begin',
         W/2, H/2
       );
       ctx.textAlign = 'left';
-      // Draw time axis ghost using total bar count
-      this._drawTimeAxis(ctx, W, H, PL, PR, PT, PB, total, null);
+      if (total) this._timeAxis(ctx, W, H, PL, PR, PT, PB, total, null);
       return;
     }
 
-    // ── Slot width is fixed across ALL total candles so time axis stays correct.
-    // Each candle occupies the same width regardless of how many are visible.
+    // ── sizing: fixed slot = total candles across full width ─
+    // Candle i always sits at the same X regardless of cursor position.
+    // This makes the time axis stable and the chart feel like a real platform.
     const slotW   = chartW / total;
-    const candleW = Math.max(1, slotW * 0.72);
+    const candleW = Math.max(1.5, slotW * 0.70);
     const hw      = candleW / 2;
+    const toX     = i => PL + (i + 0.5) * slotW;
 
-    // toX maps candle index → pixel x centre  (left-anchored, same as real chart)
-    const toX = i => PL + (i + 0.5) * slotW;
-
-    // Price range — only from visible candles (auto-scale Y)
+    // ── price range (auto-scale from visible only) ─────────
     let hi = -Infinity, lo = Infinity;
     for (const c of visible) { if(c.high>hi) hi=c.high; if(c.low<lo) lo=c.low; }
-    const pad  = (hi-lo)*0.08 || hi*0.005 || 1;
+    const pad  = (hi - lo) * 0.08 || hi * 0.005 || 1;
     const yMin = lo - pad, yMax = hi + pad;
-    const toY  = v => PT + (1 - (v-yMin)/(yMax-yMin)) * chartH;
+    const toY  = v => PT + (1 - (v - yMin)/(yMax - yMin)) * chartH;
 
-    // Grid + Y-axis labels
-    ctx.font      = '10px Segoe UI, sans-serif';
+    // ── horizontal grid + Y labels ─────────────────────────
+    ctx.font      = '10px Segoe UI,sans-serif';
     ctx.fillStyle = '#8b949e';
     ctx.textAlign = 'right';
-    for (let i=0; i<=5; i++) {
-      const frac = i/5;
-      const yv   = yMax - frac*(yMax-yMin);
-      const yp   = PT + frac*chartH;
-      ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.8;
-      ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
-      ctx.fillText(yv.toFixed(2), PL-4, yp+3);
+    for (let i = 0; i <= 5; i++) {
+      const f  = i / 5;
+      const yp = PT + f * chartH;
+      const yv = yMax - f * (yMax - yMin);
+      ctx.strokeStyle = '#1c2128'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(PL, yp); ctx.lineTo(W-PR, yp); ctx.stroke();
+      ctx.fillText(yv.toFixed(2), PL - 4, yp + 3);
     }
     ctx.textAlign = 'left';
 
-    // VWAP line
-    let cumPV=0, cumV=0;
-    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.2;
-    visible.forEach((c,i) => {
-      const hlc3 = (c.high+c.low+c.close)/3;
-      cumPV += hlc3*c.volume; cumV += c.volume;
-      const vwap = cumV ? cumPV/cumV : hlc3;
-      const xp=toX(i), yp=toY(vwap);
-      i===0 ? ctx.moveTo(xp,yp) : ctx.lineTo(xp,yp);
+    // ── VWAP line (from indicator data, fallback to computed) ──
+    ctx.beginPath(); ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5;
+    let cumPV = 0, cumV = 0;
+    visible.forEach((c, i) => {
+      let vwap = c.vwap;
+      if (vwap == null) {                        // fallback: compute inline
+        const hlc3 = (c.high + c.low + c.close) / 3;
+        cumPV += hlc3 * c.volume; cumV += c.volume;
+        vwap = cumV ? cumPV / cumV : hlc3;
+      }
+      const xp = toX(i), yp = toY(vwap);
+      i === 0 ? ctx.moveTo(xp, yp) : ctx.lineTo(xp, yp);
     });
     ctx.stroke();
 
-    // Candles
-    visible.forEach((c,i) => {
-      const xc  = toX(i);
+    // ── Gravity / CoG line ─────────────────────────────────
+    let gravStarted = false;
+    ctx.beginPath(); ctx.strokeStyle = '#d2a8ff'; ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 3]);
+    visible.forEach((c, i) => {
+      if (c.gravity == null) return;
+      const xp = toX(i), yp = toY(c.gravity);
+      if (!gravStarted) { ctx.moveTo(xp, yp); gravStarted = true; }
+      else ctx.lineTo(xp, yp);
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // ── ORB levels (horizontal lines from first bar that has them) ─
+    const orbBar = visible.find(c => c.fib0 != null);
+    if (orbBar) {
+      const orbLevels = [
+        { v: orbBar.fib0,   col: '#3fb950', lbl: 'ORB H' },
+        { v: orbBar.fib50,  col: '#58a6ff', lbl: 'ORB M' },
+        { v: orbBar.fib100, col: '#f85149', lbl: 'ORB L' },
+      ];
+      orbLevels.forEach(({ v, col, lbl }) => {
+        if (v == null) return;
+        const yp = toY(v);
+        ctx.strokeStyle = col; ctx.lineWidth = 0.8;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.moveTo(PL, yp); ctx.lineTo(W - PR, yp); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col; ctx.font = '9px Segoe UI,sans-serif';
+        ctx.fillText(lbl + ' ' + v.toFixed(2), W - PR - 56, yp - 2);
+      });
+    }
+
+    // ── candles ────────────────────────────────────────────
+    visible.forEach((c, i) => {
+      const xc   = toX(i);
       const bull = c.close >= c.open;
       const col  = bull ? '#26a641' : '#f85149';
       const yO=toY(c.open), yC=toY(c.close), yH=toY(c.high), yL=toY(c.low);
-      ctx.strokeStyle=col; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(xc,yH); ctx.lineTo(xc,yL); ctx.stroke();
-      ctx.fillStyle=col;
-      ctx.fillRect(xc-hw, Math.min(yO,yC), candleW, Math.max(1,Math.abs(yC-yO)));
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xc, yH); ctx.lineTo(xc, yL); ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.fillRect(xc - hw, Math.min(yO,yC), candleW, Math.max(1, Math.abs(yC-yO)));
     });
 
-    // Current-price dashed line
-    const last  = visible[visible.length-1];
+    // ── signal markers ─────────────────────────────────────
+    // Draw above/below candles using marker characters
+    const SIG_R = Math.max(4, candleW * 1.6);   // marker radius
+    visible.forEach((c, i) => {
+      const xc = toX(i);
+
+      // ── BUY signals → below candle ─────────────────────
+      const buyY = toY(c.low) + SIG_R + 4;
+      if (c.signal_r2g) {
+        _drawMarker(ctx, xc, buyY, '▲', '#26a641', SIG_R * 2, 'bold');
+      } else if (c.parabolic_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#ffd700', SIG_R * 1.8, 'bold');
+      } else if (c.explosive_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#58a6ff', SIG_R * 1.6, '');
+      } else if (c.confirmed_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#3fb950', SIG_R * 1.4, '');
+      } else if (c.basic_rise) {
+        _drawMarker(ctx, xc, buyY, '▲', '#8b949e', SIG_R * 1.2, '');
+      } else if (c.escape) {
+        _drawMarker(ctx, xc, buyY, '◆', '#d2a8ff', SIG_R * 1.4, 'bold');
+      }
+
+      // ── SELL signals → above candle ────────────────────
+      const sellY = toY(c.high) - SIG_R - 4;
+      if (c.signal_g2r) {
+        _drawMarker(ctx, xc, sellY, '▼', '#f85149', SIG_R * 2, 'bold');
+      } else if (c.crash_risk) {
+        _drawMarker(ctx, xc, sellY, '▼', '#ff7b72', SIG_R * 1.8, 'bold');
+      } else if (c.major_fall) {
+        _drawMarker(ctx, xc, sellY, '▼', '#ffa657', SIG_R * 1.6, '');
+      }
+    });
+
+    // ── current price line ─────────────────────────────────
+    const last  = visible[visible.length - 1];
     const lastY = toY(last.close);
     const bull  = last.close >= last.open;
-    ctx.strokeStyle=bull?'#26a641':'#f85149'; ctx.lineWidth=0.8;
-    ctx.setLineDash([4,3]);
-    ctx.beginPath(); ctx.moveTo(PL,lastY); ctx.lineTo(W-PR,lastY); ctx.stroke();
+    const pcol  = bull ? '#26a641' : '#f85149';
+    ctx.strokeStyle = pcol; ctx.lineWidth = 0.9;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(PL, lastY); ctx.lineTo(W-PR, lastY); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle=bull?'#26a641':'#f85149';
-    ctx.font='bold 10px Segoe UI, sans-serif';
-    ctx.fillText(last.close.toFixed(2), W-PR+2, lastY+3);
+    ctx.fillStyle = pcol; ctx.font = 'bold 10px Segoe UI,sans-serif';
+    ctx.fillText(last.close.toFixed(2), W - PR + 2, lastY + 3);
 
-    // Time axis — always uses total bar count so marks stay in correct position
-    this._drawTimeAxis(ctx, W, H, PL, PR, PT, PB, total, toX);
+    // ── time axis ──────────────────────────────────────────
+    this._timeAxis(ctx, W, H, PL, PR, PT, PB, total, toX);
 
-    // OHLCV info bar
-    const b2 = last.close >= last.open;
-    $('rpl-ohlcv').innerHTML =
-      `O <b style="color:${b2?'#26a641':'#f85149'}">${last.open.toFixed(2)}</b>  ` +
-      `H <b style="color:#26a641">${last.high.toFixed(2)}</b>  ` +
-      `L <b style="color:#f85149">${last.low.toFixed(2)}</b>  ` +
-      `C <b style="color:${b2?'#26a641':'#f85149'}">${last.close.toFixed(2)}</b>  ` +
-      `Vol <b style="color:#ffa657">${(last.volume/1e6).toFixed(2)}M</b>`;
+    // ── OHLCV + active signals info bar ────────────────────
+    const b2   = last.close >= last.open;
+    const sigs = [];
+    if (last.signal_r2g)     sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
+    if (last.signal_g2r)     sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
+    if (last.parabolic_rise) sigs.push('<span style="color:#ffd700">Parabolic</span>');
+    if (last.explosive_rise) sigs.push('<span style="color:#58a6ff">Explosive</span>');
+    if (last.confirmed_rise) sigs.push('<span style="color:#3fb950">Confirmed</span>');
+    if (last.basic_rise)     sigs.push('<span style="color:#8b949e">Basic↑</span>');
+    if (last.crash_risk)     sigs.push('<span style="color:#ff7b72">Crash⚠</span>');
+    if (last.major_fall)     sigs.push('<span style="color:#ffa657">MajFall</span>');
+    if (last.escape)         sigs.push('<span style="color:#d2a8ff">Escape</span>');
+    document.getElementById('rpl-ohlcv').innerHTML =
+      'O <b style="color:' + (b2?'#26a641':'#f85149') + '">' + last.open.toFixed(2)  + '</b>  ' +
+      'H <b style="color:#26a641">'                          + last.high.toFixed(2)  + '</b>  ' +
+      'L <b style="color:#f85149">'                          + last.low.toFixed(2)   + '</b>  ' +
+      'C <b style="color:' + (b2?'#26a641':'#f85149') + '">' + last.close.toFixed(2) + '</b>  ' +
+      'Vol <b style="color:#ffa657">'                        + (last.volume/1e6).toFixed(2) + 'M</b>' +
+      (sigs.length ? '  &nbsp;' + sigs.join(' &nbsp;') : '');
   },
 
-  // _drawTimeAxis — marks at key IST times, positions use toX(idx) when available,
-  // else approximates using minutes from 09:15 over the total session length.
-  _drawTimeAxis(ctx, W, H, PL, PR, PT, PB, total, toX){
-    const marks = ['09:15','09:30','10:00','10:30','11:00','11:30',
-                   '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
-    const slotW  = (W - PL - PR) / total;
+  // ── marker drawing helper ─────────────────────────────────
+  // (module-level function so draw() can call it)
 
-    // Build a minute-index lookup from the actual candles array
-    // (works even before candles are loaded — falls back to arithmetic)
-    ctx.font = '9px Segoe UI, sans-serif';
+  // ── time axis with dotted rules ──────────────────────────
+  _timeAxis(ctx, W, H, PL, PR, PT, PB, total, toX){
+    const MARKS = ['09:15','09:30','10:00','10:30','11:00','11:30',
+                   '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+    const slotW = (W - PL - PR) / total;
+    ctx.font      = '9px Segoe UI,sans-serif';
     ctx.fillStyle = '#8b949e';
     ctx.textAlign = 'center';
 
-    marks.forEach(t => {
-      // Find candle index whose time matches
-      let idx = this.candles.findIndex(c => c.date.slice(11,16) === t);
-
+    MARKS.forEach(t => {
+      // Find candle with this time label
+      const idx = this.candles.findIndex(c => c.date.slice(11,16) === t);
       let xp;
       if (idx >= 0 && toX) {
         xp = toX(idx);
       } else {
-        // Approximate: mins since 09:15
-        const [hh,mm] = t.split(':').map(Number);
-        const mins    = hh*60+mm - (9*60+15);
-        xp = PL + (mins / total) * (W - PL - PR) + slotW*0.5;
+        // approximate from session minutes
+        const [hh, mm] = t.split(':').map(Number);
+        const mins = hh*60 + mm - (9*60 + 15);
+        xp = PL + mins * slotW + slotW * 0.5;
       }
 
-      // Dotted vertical rule
-      ctx.strokeStyle='#21262d'; ctx.lineWidth=0.5;
-      ctx.setLineDash([2,2]);
-      ctx.beginPath(); ctx.moveTo(xp,PT); ctx.lineTo(xp,H-PB); ctx.stroke();
+      ctx.strokeStyle = '#21262d'; ctx.lineWidth = 0.5;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath(); ctx.moveTo(xp, PT); ctx.lineTo(xp, H-PB); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillText(t, xp, H-PB+12);
+      ctx.fillText(t, xp, H - PB + 12);
     });
     ctx.textAlign = 'left';
   },
 
-  // ── Mouse hover ───────────────────────────────────────────
+  // ── hover: show OHLCV for candle under mouse ─────────────
   onHover(mx){
     const vis = this.candles.slice(0, this.cursor);
     if (!vis.length) return;
-    const chartW = this.canvas().width - this.PL - this.PR;
-    const slotW  = chartW / this.candles.length;
-    const idx    = Math.floor((mx - this.PL) / slotW);
-    if (idx<0 || idx>=vis.length) return;
-    const c=vis[idx], bull=c.close>=c.open;
-    $('rpl-ohlcv').innerHTML =
-      `<b style="color:#ffd700">${c.date.slice(11,16)}</b>  ` +
-      `O <b style="color:${bull?'#26a641':'#f85149'}">${c.open.toFixed(2)}</b>  ` +
-      `H <b style="color:#26a641">${c.high.toFixed(2)}</b>  ` +
-      `L <b style="color:#f85149">${c.low.toFixed(2)}</b>  ` +
-      `C <b style="color:${bull?'#26a641':'#f85149'}">${c.close.toFixed(2)}</b>  ` +
-      `Vol <b style="color:#ffa657">${(c.volume/1e6).toFixed(2)}M</b>`;
-  }
+    const slotW = (this.cv().width - this.PL - this.PR) / this.candles.length;
+    const idx   = Math.floor((mx - this.PL) / slotW);
+    if (idx < 0 || idx >= vis.length) return;
+    const c = vis[idx], b = c.close >= c.open;
+    document.getElementById('rpl-ohlcv').innerHTML =
+      '<b style="color:#ffd700">' + c.date.slice(11,16) + '</b>  ' +
+      'O <b style="color:' + (b?'#26a641':'#f85149') + '">' + c.open.toFixed(2)  + '</b>  ' +
+      'H <b style="color:#26a641">'                         + c.high.toFixed(2)  + '</b>  ' +
+      'L <b style="color:#f85149">'                         + c.low.toFixed(2)   + '</b>  ' +
+      'C <b style="color:' + (b?'#26a641':'#f85149') + '">' + c.close.toFixed(2) + '</b>  ' +
+      'Vol <b style="color:#ffa657">'                       + (c.volume/1e6).toFixed(2) + 'M</b>';
+  },
 };
+
+// ── Marker drawing helper (used inside RPL.draw) ────────────────────────────────
+function _drawMarker(ctx, x, y, char, color, size, weight) {
+  ctx.save();
+  ctx.fillStyle  = color;
+  ctx.font       = (weight ? weight + ' ' : '') + size + 'px Segoe UI,sans-serif';
+  ctx.textAlign  = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(char, x, y);
+  ctx.restore();
+}
 
 // ── Replay button handlers ─────────────────────────────────────────────────────
 async function rplLoad(){
@@ -950,8 +1055,10 @@ async function rplLoad(){
   btn.disabled = true;
   btn.textContent = '⏳ Loading…';
   try {
-    await RPL.load(getTicker());
-    btn.textContent = `✓ ${getTicker().replace('.NS','')} loaded`;
+    // ensure canvas dimensions are correct before drawing
+    RPL.resize();
+    const n = await RPL.load(getTicker());
+    btn.textContent = '✓ ' + getTicker().replace('.NS','') + ' — ' + n + ' bars';
     $('rpl-play-btn').disabled  = false;
     $('rpl-reset-btn').disabled = false;
   } catch(e) {
