@@ -253,7 +253,8 @@
   </select>
   <button class="btn btn-blue" id="btn-load" onclick="loadAll()">Load</button>
   <button class="btn btn-gray" onclick="loadChart()">Chart Only</button>
-  <span id="countdown">⏱ 60s</span>
+  <span id="countdown" style="cursor:pointer" title="Click to pause/resume auto-refresh" onclick="toggleAutoRefresh()">⏱ 60s</span>
+  <button class="btn btn-gray" id="ar-btn" onclick="toggleAutoRefresh()" title="Toggle auto-refresh" style="padding:4px 10px;font-size:12px;">⏸ Auto</button>
   <span id="status">—</span>
 </div>
 
@@ -499,14 +500,36 @@ document.addEventListener('mousedown', e => { if(!$('ticker-wrap').contains(e.ta
 // ════════════════════════════════════════════════════════════
 const REFRESH_SECS = 60;
 let countdown = REFRESH_SECS;
+let autoRefreshOn = true;
+
 setInterval(() => {
+  if (!autoRefreshOn) return;
   $('countdown').textContent = `⏱ ${countdown}s`;
-  $('countdown').classList.toggle('ticking', countdown<=10);
+  $('countdown').classList.toggle('ticking', countdown <= 10);
   if (--countdown < 0) {
     countdown = REFRESH_SECS;
     if ($('chart-img').style.display !== 'none') loadAll(true);
   }
 }, 1000);
+
+function toggleAutoRefresh() {
+  autoRefreshOn = !autoRefreshOn;
+  const btn = $('ar-btn');
+  if (autoRefreshOn) {
+    countdown = REFRESH_SECS;
+    btn.textContent = '⏸ Auto';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    $('countdown').textContent = `⏱ ${countdown}s`;
+    $('countdown').classList.remove('ticking');
+  } else {
+    btn.textContent = '▶ Auto';
+    btn.style.color = '#f85149';
+    btn.style.borderColor = '#f85149';
+    $('countdown').textContent = '⏱ OFF';
+    $('countdown').classList.remove('ticking');
+  }
+}
 
 // ════════════════════════════════════════════════════════════
 // CHART TAB
@@ -904,6 +927,14 @@ const RPL = {
       const buyY = toY(c.low) + SIG_R + 4;
       if (c.signal_r2g) {
         _drawMarker(ctx, xc, buyY, '▲', '#26a641', SIG_R * 2, 'bold');
+      } else if (c.vol_buy_signal) {
+        _drawMarker(ctx, xc, buyY, '▲', '#00e5ff', SIG_R * 2.2, 'bold');
+        // percent_diff label
+        if (c.percent_diff != null) {
+          ctx.save(); ctx.fillStyle='#00e5ff'; ctx.font='bold 8px Segoe UI,sans-serif';
+          ctx.textAlign='center'; ctx.fillText('+' + c.percent_diff.toFixed(0)+'%', xc, buyY + SIG_R + 5);
+          ctx.restore();
+        }
       } else if (c.parabolic_rise) {
         _drawMarker(ctx, xc, buyY, '▲', '#ffd700', SIG_R * 1.8, 'bold');
       } else if (c.explosive_rise) {
@@ -920,6 +951,13 @@ const RPL = {
       const sellY = toY(c.high) - SIG_R - 4;
       if (c.signal_g2r) {
         _drawMarker(ctx, xc, sellY, '▼', '#f85149', SIG_R * 2, 'bold');
+      } else if (c.vol_sell_signal) {
+        _drawMarker(ctx, xc, sellY, '▼', '#ff6b6b', SIG_R * 2.2, 'bold');
+        if (c.percent_diff != null) {
+          ctx.save(); ctx.fillStyle='#ff6b6b'; ctx.font='bold 8px Segoe UI,sans-serif';
+          ctx.textAlign='center'; ctx.fillText(c.percent_diff.toFixed(0)+'%', xc, sellY - SIG_R - 5);
+          ctx.restore();
+        }
       } else if (c.crash_risk) {
         _drawMarker(ctx, xc, sellY, '▼', '#ff7b72', SIG_R * 1.8, 'bold');
       } else if (c.major_fall) {
@@ -947,6 +985,8 @@ const RPL = {
     const sigs = [];
     if (last.signal_r2g)     sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
     if (last.signal_g2r)     sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
+    if (last.vol_buy_signal) sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY' + (last.percent_diff!=null?' +'+last.percent_diff.toFixed(0)+'%':'') + '</span>');
+    if (last.vol_sell_signal)sigs.push('<span style="color:#ff6b6b;font-weight:700">VolSELL' + (last.percent_diff!=null?' '+last.percent_diff.toFixed(0)+'%':'') + '</span>');
     if (last.parabolic_rise) sigs.push('<span style="color:#ffd700">Parabolic</span>');
     if (last.explosive_rise) sigs.push('<span style="color:#58a6ff">Explosive</span>');
     if (last.confirmed_rise) sigs.push('<span style="color:#3fb950">Confirmed</span>');
