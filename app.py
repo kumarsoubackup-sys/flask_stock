@@ -701,6 +701,74 @@ def get_history(ticker):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/replay_data/<ticker>")
+def get_replay_data(ticker):
+    """
+    Returns per-bar indicator data for the replay chart overlay.
+    Same as /history but enriched with: vwap, gravity, fib0/50/100,
+    signal flags, and boolean markers — all per bar, IST-indexed.
+    """
+    try:
+        interval = request.args.get("interval", "1m")
+        raw_df   = fetch_ohlcv(ticker, interval=interval, range_="1d")
+
+        ind    = ScreenerIndicator(raw_df)
+        result = ind.run()
+        result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+
+        # Filter to last session only (09:15–15:30 IST)
+        last_date = result.index[-1].date()
+        mask = (
+            (result.index.date == last_date) &
+            (result.index.time >= dtime(9, 15)) &
+            (result.index.time <= dtime(15, 30))
+        )
+        df = result[mask].copy()
+
+        def _fv(v):
+            """Safe float — return None for NaN/missing."""
+            if isinstance(v, (bool, np.bool_)): return bool(v)
+            try:
+                fv = float(v)
+                return None if np.isnan(fv) else round(fv, 4)
+            except: return None
+
+        bars = []
+        for ts, row in df.iterrows():
+            bars.append({
+                "date":            ts.strftime("%Y-%m-%d %H:%M"),
+                "open":            round(float(row["open"]),  2),
+                "high":            round(float(row["high"]),  2),
+                "low":             round(float(row["low"]),   2),
+                "close":           round(float(row["close"]), 2),
+                "volume":          int(row["volume"]),
+                # overlay lines
+                "vwap":            _fv(row.get("vwap")),
+                "gravity":         _fv(row.get("gravity")),
+                "fib0":            _fv(row.get("fib0")),
+                "fib50":           _fv(row.get("fib50")),
+                "fib100":          _fv(row.get("fib100")),
+                # signal markers
+                "signal_r2g":      bool(row.get("signal_red_to_green", False)),
+                "signal_g2r":      bool(row.get("signal_green_to_red", False)),
+                "major_fall":      bool(row.get("major_fall",   False)),
+                "basic_rise":      bool(row.get("basic_rise",   False)),
+                "confirmed_rise":  bool(row.get("confirmed_rise", False)),
+                "explosive_rise":  bool(row.get("explosive_rise", False)),
+                "parabolic_rise":  bool(row.get("parabolic_rise", False)),
+                "escape":          bool(row.get("escape",      False)),
+                "crash_risk":      bool(row.get("crash_risk",  False)),
+            })
+
+        return jsonify({"ticker": ticker.upper(), "bars": len(bars), "data": bars})
+
+    except req_lib.HTTPError as e:
+        return jsonify({"error": f"Yahoo Finance returned {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
 @app.route("/screener/<ticker>")
 def get_screener(ticker):
     """Run all indicators and return summary JSON. Params: range (default 1d), interval (default 1m)."""
