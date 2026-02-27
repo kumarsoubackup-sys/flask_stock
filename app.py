@@ -653,8 +653,8 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     ax_dev.set_ylabel("VWAP Dev %", color=TEXT_COL, fontsize=8)
 
     # ── Panel 3: Excess Combined Volume ──
-    ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals>=0), color=UP_COL, alpha=0.25)
-    ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals<0),  color=DN_COL, alpha=0.25)
+    # ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals>=0), color=UP_COL, alpha=0.25)
+    # ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals<0),  color=DN_COL, alpha=0.25)
     ax_excess.plot(xs, comb_vals,   color=COMB_COL,   lw=1.0, alpha=0.8, label="Combined Vol")
     ax_excess.plot(xs, smooth_vals, color=SMOOTH_COL, lw=1.5, label=f"Smoothed ({EXCESS_SMOOTH_BARS}b)")
     ax_excess.axhline(0, color=TEXT_COL, lw=0.8)
