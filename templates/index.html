@@ -856,41 +856,35 @@ const CCHART = {
     ctx.strokeStyle='#8b949e'; ctx.lineWidth=0.8;
     ctx.beginPath(); ctx.moveTo(PL,vZ); ctx.lineTo(W-PR,vZ); ctx.stroke();
 
-    // fill
-    ctx.save();
-    if(cvV.length){
-      ctx.beginPath();
-      ctx.moveTo(toX(zS),vZ);
-      cvV.forEach((v,wi)=>ctx.lineTo(toX(zS+wi),toVY(v)));
-      ctx.lineTo(toX(zS+cvV.length-1),vZ); ctx.closePath(); ctx.clip();
-      ctx.fillStyle='rgba(38,166,65,0.30)'; ctx.fillRect(PL,vT,chartW,Math.max(0,vZ-vT));
-      ctx.fillStyle='rgba(248,81,73,0.30)'; ctx.fillRect(PL,vZ,chartW,vH);
-    }
-    ctx.restore();
+    // no fill — lines only
 
-    // combined line
-    ctx.beginPath(); ctx.strokeStyle='#ffa657'; ctx.lineWidth=1.0;
+    // combined vol line — GREEN
+    ctx.beginPath(); ctx.strokeStyle='#26a641'; ctx.lineWidth=1.2;
     cvV.forEach((v,wi)=>{const xp=toX(zS+wi),yp=toVY(v);wi===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp);});
     ctx.stroke();
 
-    // smoothed line
+    // smoothed vol line — RED
     {let ss=false;
-    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.strokeStyle='#f85149'; ctx.lineWidth=1.8;
     win.forEach((c,wi)=>{const v=c.smoothed_volume;if(v==null)return;const xp=toX(zS+wi),yp=toVY(v);ss?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),ss=true);});
     ctx.stroke();}
 
-    // vol buy/sell markers
+    // vol buy/sell markers — include time, pct, close price
     win.forEach((c,wi)=>{
       const xc=toX(zS+wi),yp=toVY(c.combined_volume??0);
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
-        const lb=c.date.slice(11,16)+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'');
-        _drawLabel(ctx,xc,yp-22,lb,'#26a641','#0d1117');
+        const lb=c.date.slice(11,16)
+          +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
+          +' ₹'+c.close.toFixed(1);
+        _drawLabel(ctx,xc,yp-24,lb,'#26a641','#0d1117');
       }
       if(c.vol_sell_signal){
         _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
-        const lb=c.date.slice(11,16)+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'');
-        _drawLabel(ctx,xc,yp+22,lb,'#f85149','#0d1117');
+        const lb=c.date.slice(11,16)
+          +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
+          +' ₹'+c.close.toFixed(1);
+        _drawLabel(ctx,xc,yp+24,lb,'#f85149','#0d1117');
       }
     });
 
@@ -1501,28 +1495,16 @@ const RPL = {
     ctx.strokeStyle='#8b949e'; ctx.lineWidth=0.8;
     ctx.beginPath(); ctx.moveTo(PL,vZero); ctx.lineTo(W-PR,vZero); ctx.stroke();
 
-    // fill path
-    ctx.save();
-    ctx.beginPath();
-    if(winVisible.length){
-      ctx.moveTo(toX(zS),vZero);
-      winVisible.forEach((c,wi)=>ctx.lineTo(toX(zS+wi),toVY(c.combined_volume??0)));
-      ctx.lineTo(toX(zS+winVisible.length-1),vZero);
-      ctx.closePath();
-    }
-    ctx.clip();
-    ctx.fillStyle='rgba(38,166,65,0.30)';  ctx.fillRect(PL,vT,chartW,Math.max(0,vZero-vT));
-    ctx.fillStyle='rgba(248,81,73,0.30)';  ctx.fillRect(PL,vZero,chartW,vH);
-    ctx.restore();
+    // no fill — lines only
 
-    // combined vol line (orange like main chart)
-    ctx.beginPath(); ctx.strokeStyle='#ffa657'; ctx.lineWidth=1.0;
+    // combined vol line — GREEN
+    ctx.beginPath(); ctx.strokeStyle='#26a641'; ctx.lineWidth=1.2;
     winVisible.forEach((c,wi)=>{ const xp=toX(zS+wi),yp=toVY(c.combined_volume??0); wi===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp); });
     ctx.stroke();
 
-    // smoothed vol line (blue)
+    // smoothed vol line — RED
     let smS=false;
-    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.strokeStyle='#f85149'; ctx.lineWidth=1.8;
     winVisible.forEach((c,wi)=>{
       const v=c.smoothed_volume; if(v==null)return;
       const xp=toX(zS+wi),yp=toVY(v);
@@ -1530,19 +1512,23 @@ const RPL = {
     });
     ctx.stroke();
 
-    // vol buy/sell markers on excess panel
+    // vol buy/sell markers on excess panel — include time, pct, close price
     winVisible.forEach((c,wi)=>{
       const i=zS+wi;
       const xc=toX(i), yp=toVY(c.combined_volume??0);
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
-        const lbl=c.date.slice(11,16)+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'');
-        _drawLabel(ctx,xc,yp-22,lbl,'#26a641','#0d1117');
+        const lbl=c.date.slice(11,16)
+          +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
+          +' ₹'+c.close.toFixed(1);
+        _drawLabel(ctx,xc,yp-24,lbl,'#26a641','#0d1117');
       }
       if(c.vol_sell_signal){
         _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
-        const lbl=c.date.slice(11,16)+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'');
-        _drawLabel(ctx,xc,yp+22,lbl,'#f85149','#0d1117');
+        const lbl=c.date.slice(11,16)
+          +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
+          +' ₹'+c.close.toFixed(1);
+        _drawLabel(ctx,xc,yp+24,lbl,'#f85149','#0d1117');
       }
     });
 
