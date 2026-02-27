@@ -208,7 +208,7 @@
   #replay-body {
     flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; position: relative;
   }
-  #rpl-canvas { display: block; width: 100%; height: 100%; }
+  #rpl-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
 
   #rpl-info-bar {
     position: absolute; top: 6px; left: 68px;
@@ -383,6 +383,7 @@
     <button class="rpl-btn" id="rpl-play-btn"  onclick="rplPlayPause()" disabled>▶ Play</button>
     <button class="rpl-btn" id="rpl-stop-btn"  onclick="rplStop()"      disabled>⏹ Stop</button>
     <button class="rpl-btn" id="rpl-reset-btn" onclick="rplReset()"     disabled>⏮ Reset</button>
+    <button class="rpl-btn" id="rpl-zoom-btn"  onclick="RPL.resetZoom()" style="background:#21262d;color:#c9d1d9;">🔍 Full</button>
     <label style="font-size:12px;color:#8b949e;">Speed</label>
     <select id="rpl-speed-sel">
       <option value="800">0.5×  slow</option>
@@ -430,7 +431,7 @@ const SYMBOLS = [
   "RELIANCE.NS","CIPLA.NS","KOTAKBANK.NS","BAJAJFINSV.NS","HINDUNILVR.NS",
   "ASIANPAINT.NS","TECHM.NS","NESTLEIND.NS","POWERGRID.NS","LT.NS",
   "BAJAJ-AUTO.NS","BRITANNIA.NS","TATACONSUM.NS","COALINDIA.NS",
-  "ULTRACEMCO.NS","DIVISLAB.NS","TITAN.NS","APOLLOHOSP.NS","ALOKINDS.NS","MANAPPURAM.NS"
+  "ULTRACEMCO.NS","DIVISLAB.NS","TITAN.NS","APOLLOHOSP.NS"
 ].sort();
 
 // ════════════════════════════════════════════════════════════
@@ -696,7 +697,10 @@ const RPL = {
   timer   : null,
   playing : false,
   _ticker : '',
-  PL:62, PR:18, PT:28, PB:34,  // canvas padding
+  // zoom window: indices into candles[] that are visible
+  zoomStart : 0,
+  zoomEnd   : 0,    // 0 means "use full range"
+  _drag     : null, // {startX, startZoomStart, startZoomEnd} while panning
 
   // ── helpers ─────────────────────────────────────────────
   cv ()  { return document.getElementById('rpl-canvas'); },
@@ -723,8 +727,10 @@ const RPL = {
     this._ticker = ticker.replace('.NS','');
     if (!this.candles.length) throw new Error('No session candles');
 
-    this.cursor  = 0;
-    this.playing = false;
+    this.cursor   = 0;
+    this.playing  = false;
+    this.zoomStart = 0;
+    this.zoomEnd   = 0;
 
     this.resize();
     this.draw();
@@ -843,21 +849,35 @@ const RPL = {
       ctx.fillStyle='#8b949e'; ctx.font='14px Segoe UI,sans-serif'; ctx.textAlign='center';
       ctx.fillText(total?('▶ Play — '+total+' candles ready'):'📥 Load Data to begin', W/2, H/2);
       ctx.textAlign='left';
-      if(total) this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,null);
+      if(total) this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,null,0,total);
       return;
     }
 
-    // ── shared X mapping (fixed slot = full session width) ───
-    const slotW  =chartW/total;
-    const candleW=Math.max(1.5,slotW*0.72);
-    const hw     =candleW/2;
-    const toX    =i=>PL+(i+0.5)*slotW;
+    // ── zoom window ─────────────────────────────────────────
+    // zoomStart/zoomEnd are candle indices; 0/0 = full session
+    const zS = this.zoomStart;
+    const zE = this.zoomEnd || total;          // exclusive end
+    const zLen = Math.max(1, zE - zS);         // bars in view
+
+    // ── shared X mapping (maps candle index → canvas X) ──
+    // Only candles in [zS, zE) are plotted; others are off-screen.
+    const slotW  = chartW / zLen;
+    const candleW= Math.max(1.5, slotW * 0.72);
+    const hw     = candleW / 2;
+    const toX    = i => PL + (i - zS + 0.5) * slotW;
+
+    // ── visible slice (only candles in zoom window) ─────────
+    // We still draw the full `visible` array but toX will put
+    // out-of-window bars off-screen; clip prevents them leaking.
+    // The price Y range is computed only from in-window bars.
+    const winVisible = visible.slice(zS, Math.min(zE, visible.length));
 
     // ════════════════════════════════════════════════════════
     // PANEL 1 — PRICE
     // ════════════════════════════════════════════════════════
     let hi=-Infinity,lo=Infinity;
-    for(const c of visible){if(c.high>hi)hi=c.high; if(c.low<lo)lo=c.low;}
+    const priceSource = winVisible.length ? winVisible : visible;
+    for(const c of priceSource){if(c.high>hi)hi=c.high; if(c.low<lo)lo=c.low;}
     const pRange=hi-lo||hi*0.01||1;
     const pPad=pRange*0.10;
     const pMin=lo-pPad, pMax=hi+pPad;
@@ -896,30 +916,37 @@ const RPL = {
       });
     }
 
-    // VWAP line — solid blue
-    let cumPV=0,cumV=0;
-    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.8;
-    visible.forEach((c,i)=>{
-      let vwap=c.vwap;
-      if(vwap==null){const h3=(c.high+c.low+c.close)/3;cumPV+=h3*c.volume;cumV+=c.volume;vwap=cumV?cumPV/cumV:h3;}
-      const xp=toX(i),yp=toY(vwap);
-      i===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp);
-    });
-    ctx.stroke();
+    // VWAP line — recompute cumulative from full visible (not just window) for accuracy
+    // but only draw candles in the zoom window
+    {
+      // build vwap for all visible bars first
+      const vwapArr=[]; let cpv=0,cv2=0;
+      visible.forEach(c=>{
+        let v=c.vwap;
+        if(v==null){const h3=(c.high+c.low+c.close)/3;cpv+=h3*c.volume;cv2+=c.volume;v=cv2?cpv/cv2:h3;}
+        vwapArr.push(v);
+      });
+      ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.8; let vs=false;
+      winVisible.forEach((c,wi)=>{
+        const i=zS+wi, yp=toY(vwapArr[i]), xp=toX(i);
+        vs?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),vs=true);
+      });
+      ctx.stroke();
+    }
 
     // Gravity — dashed white/light
     let gS=false;
     ctx.beginPath(); ctx.strokeStyle='rgba(210,210,210,0.7)'; ctx.lineWidth=1.1; ctx.setLineDash([5,4]);
-    visible.forEach((c,i)=>{
+    winVisible.forEach((c,wi)=>{
       if(c.gravity==null)return;
-      const xp=toX(i),yp=toY(c.gravity);
+      const xp=toX(zS+wi),yp=toY(c.gravity);
       gS?(ctx.lineTo(xp,yp)):(ctx.moveTo(xp,yp),gS=true);
     });
     ctx.stroke(); ctx.setLineDash([]);
 
     // Candles
-    visible.forEach((c,i)=>{
-      const xc=toX(i),bull=c.close>=c.open,col=bull?'#26a641':'#f85149';
+    winVisible.forEach((c,wi)=>{
+      const xc=toX(zS+wi),bull=c.close>=c.open,col=bull?'#26a641':'#f85149';
       const yO=toY(c.open),yC=toY(c.close),yH=toY(c.high),yL=toY(c.low);
       ctx.strokeStyle=col; ctx.lineWidth=Math.max(0.8,candleW*0.15);
       ctx.beginPath(); ctx.moveTo(xc,yH); ctx.lineTo(xc,yL); ctx.stroke();
@@ -943,8 +970,8 @@ const RPL = {
 
     // ── Signal markers on price panel ────────────────────────
     const SIG=Math.max(5,candleW*2.0);
-    visible.forEach((c,i)=>{
-      const xc=toX(i);
+    winVisible.forEach((c,wi)=>{
+      const xc=toX(zS+wi);
       // buy markers below candle
       const buyY=toY(c.low)+SIG+2;
       if(c.vol_buy_signal){
@@ -992,8 +1019,8 @@ const RPL = {
     // ════════════════════════════════════════════════════════
     // PANEL 2 — EXCESS COMBINED VOLUME
     // ════════════════════════════════════════════════════════
-    const cvVals =visible.map(c=>c.combined_volume??0);
-    const smVals =visible.map(c=>c.smoothed_volume??null);
+    const cvVals =winVisible.map(c=>c.combined_volume??0);
+    const smVals =winVisible.map(c=>c.smoothed_volume??null);
     const allVol =[...cvVals, ...smVals.filter(v=>v!=null)];
     const vAbsMax=Math.max(...allVol.map(Math.abs),1);
     const vYMin=-vAbsMax*1.12, vYMax=vAbsMax*1.12;
@@ -1019,10 +1046,12 @@ const RPL = {
     // fill path
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(toX(0),vZero);
-    cvVals.forEach((v,i)=>ctx.lineTo(toX(i),toVY(v)));
-    ctx.lineTo(toX(cvVals.length-1),vZero);
-    ctx.closePath();
+    if(winVisible.length){
+      ctx.moveTo(toX(zS),vZero);
+      winVisible.forEach((c,wi)=>ctx.lineTo(toX(zS+wi),toVY(c.combined_volume??0)));
+      ctx.lineTo(toX(zS+winVisible.length-1),vZero);
+      ctx.closePath();
+    }
     ctx.clip();
     ctx.fillStyle='rgba(38,166,65,0.30)';  ctx.fillRect(PL,vT,chartW,Math.max(0,vZero-vT));
     ctx.fillStyle='rgba(248,81,73,0.30)';  ctx.fillRect(PL,vZero,chartW,vH);
@@ -1030,21 +1059,22 @@ const RPL = {
 
     // combined vol line (orange like main chart)
     ctx.beginPath(); ctx.strokeStyle='#ffa657'; ctx.lineWidth=1.0;
-    cvVals.forEach((v,i)=>{ const xp=toX(i),yp=toVY(v); i===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp); });
+    winVisible.forEach((c,wi)=>{ const xp=toX(zS+wi),yp=toVY(c.combined_volume??0); wi===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp); });
     ctx.stroke();
 
     // smoothed vol line (blue)
     let smS=false;
     ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.6;
-    smVals.forEach((v,i)=>{
-      if(v==null)return;
-      const xp=toX(i),yp=toVY(v);
+    winVisible.forEach((c,wi)=>{
+      const v=c.smoothed_volume; if(v==null)return;
+      const xp=toX(zS+wi),yp=toVY(v);
       smS?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),smS=true);
     });
     ctx.stroke();
 
     // vol buy/sell markers on excess panel
-    visible.forEach((c,i)=>{
+    winVisible.forEach((c,wi)=>{
+      const i=zS+wi;
       const xc=toX(i), yp=toVY(c.combined_volume??0);
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
@@ -1061,7 +1091,7 @@ const RPL = {
     // ════════════════════════════════════════════════════════
     // PANEL 3 — VWAP DEV %
     // ════════════════════════════════════════════════════════
-    const devVals=visible.map(c=>c.vwap_dev??null).filter(v=>v!=null);
+    const devVals=winVisible.map(c=>c.vwap_dev??null).filter(v=>v!=null);
     let dAbsMax=Math.max(...devVals.map(Math.abs),0.1);
     const dYMin=-dAbsMax*1.2, dYMax=dAbsMax*1.2;
     const toDY=v=>dT+(1-(v-dYMin)/(dYMax-dYMin))*dH;
@@ -1084,12 +1114,12 @@ const RPL = {
 
     // fill
     ctx.save();
-    const devBars=visible.filter(c=>c.vwap_dev!=null);
+    const devBars=winVisible.map((c,wi)=>({c,i:zS+wi})).filter(({c})=>c.vwap_dev!=null);
     if(devBars.length){
       ctx.beginPath();
-      ctx.moveTo(toX(visible.indexOf(devBars[0])),dZero);
-      devBars.forEach(c=>ctx.lineTo(toX(visible.indexOf(c)),toDY(c.vwap_dev)));
-      ctx.lineTo(toX(visible.indexOf(devBars[devBars.length-1])),dZero);
+      ctx.moveTo(toX(devBars[0].i),dZero);
+      devBars.forEach(({c,i})=>ctx.lineTo(toX(i),toDY(c.vwap_dev)));
+      ctx.lineTo(toX(devBars[devBars.length-1].i),dZero);
       ctx.closePath(); ctx.clip();
       ctx.fillStyle='rgba(38,166,65,0.40)';  ctx.fillRect(PL,dT,chartW,Math.max(0,dZero-dT));
       ctx.fillStyle='rgba(248,81,73,0.40)';  ctx.fillRect(PL,dZero,chartW,dH);
@@ -1099,9 +1129,9 @@ const RPL = {
     // dev line
     let dvS=false;
     ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.2;
-    visible.forEach((c,i)=>{
+    winVisible.forEach((c,wi)=>{
       if(c.vwap_dev==null)return;
-      const xp=toX(i),yp=toDY(c.vwap_dev);
+      const xp=toX(zS+wi),yp=toDY(c.vwap_dev);
       dvS?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),dvS=true);
     });
     ctx.stroke();
@@ -1109,7 +1139,7 @@ const RPL = {
     // ════════════════════════════════════════════════════════
     // SHARED TIME AXIS — dotted verticals spanning all panels
     // ════════════════════════════════════════════════════════
-    this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,toX);
+    this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,toX,zS,zE);
 
     // ── Info bar ─────────────────────────────────────────────
     const b2=last.close>=last.open;
@@ -1176,16 +1206,19 @@ const RPL = {
   },
 
   // ── Time axis: dotted vertical lines spanning all panels ─
-  _timeAxis(ctx,W,PL,PR,panelTop,panelBot,total,toX){
+  _timeAxis(ctx,W,PL,PR,panelTop,panelBot,total,toX,zS=0,zE=0){
     const MARKS=['09:15','09:30','10:00','10:30','11:00','11:30',
                  '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
     const slotW=(W-PL-PR)/total;
     ctx.font='9px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='center';
+    const _zE = zE || total;
     MARKS.forEach(t=>{
       const idx=this.candles.findIndex(c=>c.date.slice(11,16)===t);
+      if(idx>=0 && (idx<zS || idx>=_zE)) return;   // skip marks outside zoom window
       let xp;
       if(idx>=0&&toX){ xp=toX(idx); }
       else { const[hh,mm]=t.split(':').map(Number); xp=PL+(hh*60+mm-(9*60+15))*slotW+slotW*0.5; }
+      if(xp<PL||xp>W-PR) return;
       ctx.strokeStyle='#21262d'; ctx.lineWidth=0.5; ctx.setLineDash([2,3]);
       ctx.beginPath(); ctx.moveTo(xp,panelTop); ctx.lineTo(xp,panelBot); ctx.stroke();
       ctx.setLineDash([]);
@@ -1215,6 +1248,53 @@ const RPL = {
       'C <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.close.toFixed(2)+'</b>  '+
       'Vol <b style="color:#ffa657">'+(c.volume/1e6).toFixed(2)+'M</b>'+
       (sigs.length?'  &nbsp;'+sigs.join(' &nbsp;'):'');
+  },
+
+  // ── Zoom helpers ─────────────────────────────────────────
+  // wheelZoom: zoom in/out centered on mouse X position
+  wheelZoom(deltaY, mouseX){
+    if(!this.candles.length) return;
+    const total=this.candles.length;
+    const vis=this.cursor||total;
+    const zS=this.zoomStart, zE=this.zoomEnd||vis;
+    const zLen=zE-zS;
+
+    // factor: scroll up = zoom in (shrink window), down = zoom out
+    const factor = deltaY < 0 ? 0.80 : 1.25;
+    const newLen  = Math.round(Math.max(10, Math.min(vis, zLen*factor)));
+
+    // anchor: keep the bar under the mouse fixed
+    const PL=68, PR=62;
+    const chartW=this.cv().width-PL-PR;
+    const frac=Math.max(0,Math.min(1,(mouseX-PL)/chartW));
+    const anchorBar = Math.round(zS + frac*zLen);
+
+    let newStart=Math.round(anchorBar - frac*newLen);
+    let newEnd  =newStart+newLen;
+    if(newStart<0){newStart=0; newEnd=newLen;}
+    if(newEnd>vis){newEnd=vis; newStart=Math.max(0,vis-newLen);}
+
+    this.zoomStart=newStart;
+    this.zoomEnd  =newEnd;
+    this.draw();
+  },
+
+  // pan: shift zoom window left/right by dx pixels
+  panBy(dBars){
+    if(!this.candles.length) return;
+    const vis=this.cursor||this.candles.length;
+    const zS=this.zoomStart, zE=this.zoomEnd||vis;
+    const zLen=zE-zS;
+    let ns=zS+dBars, ne=zE+dBars;
+    if(ns<0){ns=0;ne=zLen;}
+    if(ne>vis){ne=vis;ns=Math.max(0,vis-zLen);}
+    this.zoomStart=ns; this.zoomEnd=ne;
+    this.draw();
+  },
+
+  // reset zoom to full view
+  resetZoom(){
+    this.zoomStart=0; this.zoomEnd=0; this.draw();
   },
 };
 
@@ -1272,10 +1352,55 @@ $('rpl-progress-wrap').addEventListener('click', e => {
   RPL.seek(Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width)));
 });
 
+// ── Wheel: zoom in/out centered on mouse position ─────────────────────────────
+$('rpl-canvas').addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = $('rpl-canvas').getBoundingClientRect();
+  RPL.wheelZoom(e.deltaY, e.clientX - rect.left);
+}, { passive: false });
+
+// ── Drag to pan ───────────────────────────────────────────────────────────────
+$('rpl-canvas').addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const rect = $('rpl-canvas').getBoundingClientRect();
+  RPL._drag = {
+    startX     : e.clientX - rect.left,
+    startZS    : RPL.zoomStart,
+    startZE    : RPL.zoomEnd || (RPL.cursor || RPL.candles.length),
+  };
+  $('rpl-canvas').style.cursor = 'grabbing';
+});
+
 $('rpl-canvas').addEventListener('mousemove', e => {
   const rect = $('rpl-canvas').getBoundingClientRect();
-  RPL.onHover(e.clientX - rect.left);
+  const mx   = e.clientX - rect.left;
+
+  if (RPL._drag) {
+    const PL=68, PR=62;
+    const chartW = $('rpl-canvas').width - PL - PR;
+    const zLen   = RPL._drag.startZE - RPL._drag.startZS;
+    const slotW  = chartW / zLen;
+    const dBars  = Math.round((RPL._drag.startX - mx) / slotW);
+    const vis    = RPL.cursor || RPL.candles.length;
+
+    let ns = RPL._drag.startZS + dBars;
+    let ne = RPL._drag.startZE + dBars;
+    if (ns < 0)   { ns = 0;   ne = zLen; }
+    if (ne > vis) { ne = vis; ns = Math.max(0, vis - zLen); }
+    RPL.zoomStart = ns;
+    RPL.zoomEnd   = ne;
+    RPL.draw();
+  } else {
+    RPL.onHover(mx);
+  }
 });
+
+['mouseup','mouseleave'].forEach(ev => $('rpl-canvas').addEventListener(ev, () => {
+  RPL._drag = null;
+  $('rpl-canvas').style.cursor = 'crosshair';
+}));
+
+$('rpl-canvas').addEventListener('dblclick', () => RPL.resetZoom());
 
 // ── Init canvas on page load ───────────────────────────────────────────────────
 window.addEventListener('load', () => {
