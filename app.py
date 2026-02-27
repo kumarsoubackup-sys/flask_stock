@@ -834,6 +834,9 @@ def get_replay_data(ticker):
                 "fib0":            _fv(row.get("fib0")),
                 "fib50":           _fv(row.get("fib50")),
                 "fib100":          _fv(row.get("fib100")),
+                "vwap_dev":        _fv(row.get("vwap_dev")),
+                "combined_volume": _fv(row.get("combined_volume")),
+                "smoothed_volume": _fv(row.get("smoothed_volume")),
                 # signal markers
                 "signal_r2g":      bool(row.get("signal_red_to_green", False)),
                 "signal_g2r":      bool(row.get("signal_green_to_red", False)),
