@@ -662,7 +662,7 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     # Percent diff on twin axis (right side)
     ax_pct = ax_excess.twinx()
     valid_pct = np.where(np.isfinite(pct_diff_vals), pct_diff_vals, np.nan)
-    ax_pct.plot(xs, valid_pct, color="#ffa657", lw=0.8, alpha=0.6, label="% Diff")
+    ax_pct.plot(xs, valid_pct, color="#2986cc", lw=0.8, alpha=0.6, label="% Diff")
     ax_pct.axhline( 25, color=UP_COL, lw=0.6, ls="--", alpha=0.5)
     ax_pct.axhline(-25, color=DN_COL, lw=0.6, ls="--", alpha=0.5)
     ax_pct.set_ylabel("% Diff", color="#ffa657", fontsize=7)
