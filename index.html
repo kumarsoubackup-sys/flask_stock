@@ -208,7 +208,7 @@
   #replay-body {
     flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; position: relative;
   }
-  #rpl-canvas { display: block; width: 100%; height: 100%; }
+  #rpl-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
 
   #rpl-info-bar {
     position: absolute; top: 6px; left: 68px;
@@ -383,6 +383,7 @@
     <button class="rpl-btn" id="rpl-play-btn"  onclick="rplPlayPause()" disabled>▶ Play</button>
     <button class="rpl-btn" id="rpl-stop-btn"  onclick="rplStop()"      disabled>⏹ Stop</button>
     <button class="rpl-btn" id="rpl-reset-btn" onclick="rplReset()"     disabled>⏮ Reset</button>
+    <button class="rpl-btn" id="rpl-zoom-btn"  onclick="RPL.resetZoom()" style="background:#21262d;color:#c9d1d9;">🔍 Full</button>
     <label style="font-size:12px;color:#8b949e;">Speed</label>
     <select id="rpl-speed-sel">
       <option value="800">0.5×  slow</option>
@@ -691,11 +692,15 @@ async function runScanner(){
 // REPLAY ENGINE
 // ════════════════════════════════════════════════════════════
 const RPL = {
-  candles : [],     // all session candles (IST filtered)
-  cursor  : 0,      // number drawn so far (0 = nothing shown)
+  candles : [],
+  cursor  : 0,
   timer   : null,
   playing : false,
-  PL:62, PR:18, PT:28, PB:34,  // canvas padding
+  _ticker : '',
+  // zoom window: indices into candles[] that are visible
+  zoomStart : 0,
+  zoomEnd   : 0,    // 0 means "use full range"
+  _drag     : null, // {startX, startZoomStart, startZoomEnd} while panning
 
   // ── helpers ─────────────────────────────────────────────
   cv ()  { return document.getElementById('rpl-canvas'); },
@@ -719,10 +724,13 @@ const RPL = {
     if (json.error) throw new Error(json.error);
 
     this.candles = json.data || [];
+    this._ticker = ticker.replace('.NS','');
     if (!this.candles.length) throw new Error('No session candles');
 
-    this.cursor  = 0;
-    this.playing = false;
+    this.cursor   = 0;
+    this.playing  = false;
+    this.zoomStart = 0;
+    this.zoomEnd   = 0;
 
     this.resize();
     this.draw();
@@ -800,252 +808,519 @@ const RPL = {
     document.getElementById('rpl-reset-btn').disabled = total === 0;
   },
 
-  // ── main draw routine ────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
+  // DRAW — 3-panel chart matching the main chart image
+  // Panel ratios: Price 60% | Excess Vol 25% | VWAP Dev 15%
+  // ══════════════════════════════════════════════════════════
   draw(){
-    const cv  = this.cv(), ctx = this.ctx();
-    const W = cv.width, H = cv.height;
-    if (!W || !H) return;               // guard: canvas not yet laid out
-    const {PL,PR,PT,PB} = this;
-    const chartW = W - PL - PR;
-    const chartH = H - PT - PB;
+    const cv=this.cv(), ctx=this.ctx();
+    const W=cv.width, H=cv.height;
+    if(!W||!H) return;
 
-    ctx.fillStyle = '#0d1117';
-    ctx.fillRect(0, 0, W, H);
+    const total  =this.candles.length;
+    const visible=this.candles.slice(0,this.cursor);
 
-    const total   = this.candles.length;
-    const visible = this.candles.slice(0, this.cursor);
+    // ── background ──────────────────────────────────────────
+    ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,H);
 
-    // ── empty / no-data state ─────────────────────────────
-    if (!visible.length) {
-      ctx.fillStyle = '#8b949e';
-      ctx.font      = '14px Segoe UI,sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(
-        total ? ('Press ▶ Play — ' + total + ' candles loaded') : 'Press 📥 Load Data to begin',
-        W/2, H/2
-      );
-      ctx.textAlign = 'left';
-      if (total) this._timeAxis(ctx, W, H, PL, PR, PT, PB, total, null);
+    // ── layout constants ────────────────────────────────────
+    const PL=68, PR=62, PT=30, PB=28;   // PR wide for right-side ORB labels
+    const innerH = H - PT - PB;
+    const pH = Math.floor(innerH*0.60);
+    const vH = Math.floor(innerH*0.25);
+    const dH = innerH - pH - vH;
+    const pT=PT, vT=PT+pH+1, dT=vT+vH+1;
+    const chartW=W-PL-PR;
+
+    // ── panel border lines ───────────────────────────────────
+    ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,vT-1); ctx.lineTo(W,vT-1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,dT-1); ctx.lineTo(W,dT-1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,dT+dH+PB-1); ctx.lineTo(W,dT+dH+PB-1); ctx.stroke();
+
+    // ── panel Y-axis labels ──────────────────────────────────
+    ctx.fillStyle='#556070'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='left';
+    ctx.fillText('PRICE & VWAP', PL+4, pT+11);
+    ctx.fillText('EXCESS VOL',   PL+4, vT+11);
+    ctx.fillText('VWAP DEV %',   PL+4, dT+11);
+
+    // ── empty state ──────────────────────────────────────────
+    if(!visible.length){
+      ctx.fillStyle='#8b949e'; ctx.font='14px Segoe UI,sans-serif'; ctx.textAlign='center';
+      ctx.fillText(total?('▶ Play — '+total+' candles ready'):'📥 Load Data to begin', W/2, H/2);
+      ctx.textAlign='left';
+      if(total) this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,null,0,total);
       return;
     }
 
-    // ── sizing: fixed slot = total candles across full width ─
-    // Candle i always sits at the same X regardless of cursor position.
-    // This makes the time axis stable and the chart feel like a real platform.
-    const slotW   = chartW / total;
-    const candleW = Math.max(1.5, slotW * 0.70);
-    const hw      = candleW / 2;
-    const toX     = i => PL + (i + 0.5) * slotW;
+    // ── zoom window ─────────────────────────────────────────
+    // zoomStart/zoomEnd are candle indices; 0/0 = full session
+    const zS = this.zoomStart;
+    const zE = this.zoomEnd || total;          // exclusive end
+    const zLen = Math.max(1, zE - zS);         // bars in view
 
-    // ── price range (auto-scale from visible only) ─────────
-    let hi = -Infinity, lo = Infinity;
-    for (const c of visible) { if(c.high>hi) hi=c.high; if(c.low<lo) lo=c.low; }
-    const pad  = (hi - lo) * 0.08 || hi * 0.005 || 1;
-    const yMin = lo - pad, yMax = hi + pad;
-    const toY  = v => PT + (1 - (v - yMin)/(yMax - yMin)) * chartH;
+    // ── shared X mapping (maps candle index → canvas X) ──
+    // Only candles in [zS, zE) are plotted; others are off-screen.
+    const slotW  = chartW / zLen;
+    const candleW= Math.max(1.5, slotW * 0.72);
+    const hw     = candleW / 2;
+    const toX    = i => PL + (i - zS + 0.5) * slotW;
 
-    // ── horizontal grid + Y labels ─────────────────────────
-    ctx.font      = '10px Segoe UI,sans-serif';
-    ctx.fillStyle = '#8b949e';
-    ctx.textAlign = 'right';
-    for (let i = 0; i <= 5; i++) {
-      const f  = i / 5;
-      const yp = PT + f * chartH;
-      const yv = yMax - f * (yMax - yMin);
-      ctx.strokeStyle = '#1c2128'; ctx.lineWidth = 0.8;
-      ctx.beginPath(); ctx.moveTo(PL, yp); ctx.lineTo(W-PR, yp); ctx.stroke();
-      ctx.fillText(yv.toFixed(2), PL - 4, yp + 3);
+    // ── visible slice (only candles in zoom window) ─────────
+    // We still draw the full `visible` array but toX will put
+    // out-of-window bars off-screen; clip prevents them leaking.
+    // The price Y range is computed only from in-window bars.
+    const winVisible = visible.slice(zS, Math.min(zE, visible.length));
+
+    // ════════════════════════════════════════════════════════
+    // PANEL 1 — PRICE
+    // ════════════════════════════════════════════════════════
+    let hi=-Infinity,lo=Infinity;
+    const priceSource = winVisible.length ? winVisible : visible;
+    for(const c of priceSource){if(c.high>hi)hi=c.high; if(c.low<lo)lo=c.low;}
+    const pRange=hi-lo||hi*0.01||1;
+    const pPad=pRange*0.10;
+    const pMin=lo-pPad, pMax=hi+pPad;
+    const toY=v=>pT+(1-(v-pMin)/(pMax-pMin))*pH;
+
+    // price grid lines
+    ctx.font='9px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='right';
+    for(let i=0;i<=5;i++){
+      const f=i/5, yp=pT+f*pH, yv=pMax-f*(pMax-pMin);
+      ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.6;
+      ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
+      ctx.fillText(yv.toFixed(2),PL-3,yp+3);
     }
-    ctx.textAlign = 'left';
+    ctx.textAlign='left';
 
-    // ── VWAP line (from indicator data, fallback to computed) ──
-    ctx.beginPath(); ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5;
-    let cumPV = 0, cumV = 0;
-    visible.forEach((c, i) => {
-      let vwap = c.vwap;
-      if (vwap == null) {                        // fallback: compute inline
-        const hlc3 = (c.high + c.low + c.close) / 3;
-        cumPV += hlc3 * c.volume; cumV += c.volume;
-        vwap = cumV ? cumPV / cumV : hlc3;
-      }
-      const xp = toX(i), yp = toY(vwap);
-      i === 0 ? ctx.moveTo(xp, yp) : ctx.lineTo(xp, yp);
-    });
-    ctx.stroke();
-
-    // ── Gravity / CoG line ─────────────────────────────────
-    let gravStarted = false;
-    ctx.beginPath(); ctx.strokeStyle = '#d2a8ff'; ctx.lineWidth = 1.2;
-    ctx.setLineDash([5, 3]);
-    visible.forEach((c, i) => {
-      if (c.gravity == null) return;
-      const xp = toX(i), yp = toY(c.gravity);
-      if (!gravStarted) { ctx.moveTo(xp, yp); gravStarted = true; }
-      else ctx.lineTo(xp, yp);
-    });
-    ctx.stroke(); ctx.setLineDash([]);
-
-    // ── ORB levels (horizontal lines from first bar that has them) ─
-    const orbBar = visible.find(c => c.fib0 != null);
-    if (orbBar) {
-      const orbLevels = [
-        { v: orbBar.fib0,   col: '#3fb950', lbl: 'ORB H' },
-        { v: orbBar.fib50,  col: '#58a6ff', lbl: 'ORB M' },
-        { v: orbBar.fib100, col: '#f85149', lbl: 'ORB L' },
+    // ORB horizontal levels (dotted, coloured like main chart)
+    const orbBar=visible.find(c=>c.fib0!=null);
+    if(orbBar){
+      const orbs=[
+        {v:orbBar.fib0,  col:'#26a641',lbl:'ORB 0%'},
+        {v:orbBar.fib50, col:'#58a6ff',lbl:'ORB 50%'},
+        {v:orbBar.fib100,col:'#f85149',lbl:'ORB 100%'},
       ];
-      orbLevels.forEach(({ v, col, lbl }) => {
-        if (v == null) return;
-        const yp = toY(v);
-        ctx.strokeStyle = col; ctx.lineWidth = 0.8;
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath(); ctx.moveTo(PL, yp); ctx.lineTo(W - PR, yp); ctx.stroke();
+      orbs.forEach(({v,col,lbl})=>{
+        if(v==null)return;
+        const yp=toY(v);
+        if(yp<pT||yp>pT+pH)return;
+        ctx.strokeStyle=col; ctx.lineWidth=0.8; ctx.setLineDash([3,5]);
+        ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = col; ctx.font = '9px Segoe UI,sans-serif';
-        ctx.fillText(lbl + ' ' + v.toFixed(2), W - PR - 56, yp - 2);
+        // right-side label box (matching main chart style)
+        ctx.font='8px Segoe UI,sans-serif'; ctx.fillStyle=col;
+        ctx.fillText(lbl, W-PR+4, yp-2);
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 8px Segoe UI,sans-serif';
+        ctx.fillText(v.toFixed(1), W-PR+4, yp+8);
       });
     }
 
-    // ── candles ────────────────────────────────────────────
-    visible.forEach((c, i) => {
-      const xc   = toX(i);
-      const bull = c.close >= c.open;
-      const col  = bull ? '#26a641' : '#f85149';
-      const yO=toY(c.open), yC=toY(c.close), yH=toY(c.high), yL=toY(c.low);
-      ctx.strokeStyle = col; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(xc, yH); ctx.lineTo(xc, yL); ctx.stroke();
-      ctx.fillStyle = col;
-      ctx.fillRect(xc - hw, Math.min(yO,yC), candleW, Math.max(1, Math.abs(yC-yO)));
+    // VWAP line — recompute cumulative from full visible (not just window) for accuracy
+    // but only draw candles in the zoom window
+    {
+      // build vwap for all visible bars first
+      const vwapArr=[]; let cpv=0,cv2=0;
+      visible.forEach(c=>{
+        let v=c.vwap;
+        if(v==null){const h3=(c.high+c.low+c.close)/3;cpv+=h3*c.volume;cv2+=c.volume;v=cv2?cpv/cv2:h3;}
+        vwapArr.push(v);
+      });
+      ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.8; let vs=false;
+      winVisible.forEach((c,wi)=>{
+        const i=zS+wi, yp=toY(vwapArr[i]), xp=toX(i);
+        vs?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),vs=true);
+      });
+      ctx.stroke();
+    }
+
+    // Gravity — dashed white/light
+    let gS=false;
+    ctx.beginPath(); ctx.strokeStyle='rgba(210,210,210,0.7)'; ctx.lineWidth=1.1; ctx.setLineDash([5,4]);
+    winVisible.forEach((c,wi)=>{
+      if(c.gravity==null)return;
+      const xp=toX(zS+wi),yp=toY(c.gravity);
+      gS?(ctx.lineTo(xp,yp)):(ctx.moveTo(xp,yp),gS=true);
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // Candles
+    winVisible.forEach((c,wi)=>{
+      const xc=toX(zS+wi),bull=c.close>=c.open,col=bull?'#26a641':'#f85149';
+      const yO=toY(c.open),yC=toY(c.close),yH=toY(c.high),yL=toY(c.low);
+      ctx.strokeStyle=col; ctx.lineWidth=Math.max(0.8,candleW*0.15);
+      ctx.beginPath(); ctx.moveTo(xc,yH); ctx.lineTo(xc,yL); ctx.stroke();
+      ctx.fillStyle=col;
+      ctx.fillRect(xc-hw,Math.min(yO,yC),candleW,Math.max(1,Math.abs(yC-yO)));
     });
 
-    // ── signal markers ─────────────────────────────────────
-    // Draw above/below candles using marker characters
-    const SIG_R = Math.max(4, candleW * 1.6);   // marker radius
-    visible.forEach((c, i) => {
-      const xc = toX(i);
-
-      // ── BUY signals → below candle ─────────────────────
-      const buyY = toY(c.low) + SIG_R + 4;
-      if (c.signal_r2g) {
-        _drawMarker(ctx, xc, buyY, '▲', '#26a641', SIG_R * 2, 'bold');
-      } else if (c.parabolic_rise) {
-        _drawMarker(ctx, xc, buyY, '▲', '#ffd700', SIG_R * 1.8, 'bold');
-      } else if (c.explosive_rise) {
-        _drawMarker(ctx, xc, buyY, '▲', '#58a6ff', SIG_R * 1.6, '');
-      } else if (c.confirmed_rise) {
-        _drawMarker(ctx, xc, buyY, '▲', '#3fb950', SIG_R * 1.4, '');
-      } else if (c.basic_rise) {
-        _drawMarker(ctx, xc, buyY, '▲', '#8b949e', SIG_R * 1.2, '');
-      } else if (c.escape) {
-        _drawMarker(ctx, xc, buyY, '◆', '#d2a8ff', SIG_R * 1.4, 'bold');
-      }
-
-      // ── SELL signals → above candle ────────────────────
-      const sellY = toY(c.high) - SIG_R - 4;
-      if (c.signal_g2r) {
-        _drawMarker(ctx, xc, sellY, '▼', '#f85149', SIG_R * 2, 'bold');
-      } else if (c.crash_risk) {
-        _drawMarker(ctx, xc, sellY, '▼', '#ff7b72', SIG_R * 1.8, 'bold');
-      } else if (c.major_fall) {
-        _drawMarker(ctx, xc, sellY, '▼', '#ffa657', SIG_R * 1.6, '');
-      }
-    });
-
-    // ── current price line ─────────────────────────────────
-    const last  = visible[visible.length - 1];
-    const lastY = toY(last.close);
-    const bull  = last.close >= last.open;
-    const pcol  = bull ? '#26a641' : '#f85149';
-    ctx.strokeStyle = pcol; ctx.lineWidth = 0.9;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath(); ctx.moveTo(PL, lastY); ctx.lineTo(W-PR, lastY); ctx.stroke();
+    // Current price dashed line + label
+    const last=visible[visible.length-1];
+    const lastY=toY(last.close),bull=last.close>=last.open,pcol=bull?'#26a641':'#f85149';
+    ctx.strokeStyle=pcol; ctx.lineWidth=0.8; ctx.setLineDash([4,3]);
+    ctx.beginPath(); ctx.moveTo(PL,lastY); ctx.lineTo(W-PR,lastY); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = pcol; ctx.font = 'bold 10px Segoe UI,sans-serif';
-    ctx.fillText(last.close.toFixed(2), W - PR + 2, lastY + 3);
+    // price label box on right
+    const priceLblW=46, priceLblH=14;
+    ctx.fillStyle=pcol;
+    ctx.fillRect(W-PR+2, lastY-priceLblH/2, priceLblW, priceLblH);
+    ctx.fillStyle='#ffffff'; ctx.font='bold 9px Segoe UI,sans-serif'; ctx.textAlign='left';
+    ctx.fillText(last.close.toFixed(2), W-PR+5, lastY+4);
+    ctx.textAlign='right';
 
-    // ── time axis ──────────────────────────────────────────
-    this._timeAxis(ctx, W, H, PL, PR, PT, PB, total, toX);
-
-    // ── OHLCV + active signals info bar ────────────────────
-    const b2   = last.close >= last.open;
-    const sigs = [];
-    if (last.signal_r2g)     sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
-    if (last.signal_g2r)     sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
-    if (last.parabolic_rise) sigs.push('<span style="color:#ffd700">Parabolic</span>');
-    if (last.explosive_rise) sigs.push('<span style="color:#58a6ff">Explosive</span>');
-    if (last.confirmed_rise) sigs.push('<span style="color:#3fb950">Confirmed</span>');
-    if (last.basic_rise)     sigs.push('<span style="color:#8b949e">Basic↑</span>');
-    if (last.crash_risk)     sigs.push('<span style="color:#ff7b72">Crash⚠</span>');
-    if (last.major_fall)     sigs.push('<span style="color:#ffa657">MajFall</span>');
-    if (last.escape)         sigs.push('<span style="color:#d2a8ff">Escape</span>');
-    document.getElementById('rpl-ohlcv').innerHTML =
-      'O <b style="color:' + (b2?'#26a641':'#f85149') + '">' + last.open.toFixed(2)  + '</b>  ' +
-      'H <b style="color:#26a641">'                          + last.high.toFixed(2)  + '</b>  ' +
-      'L <b style="color:#f85149">'                          + last.low.toFixed(2)   + '</b>  ' +
-      'C <b style="color:' + (b2?'#26a641':'#f85149') + '">' + last.close.toFixed(2) + '</b>  ' +
-      'Vol <b style="color:#ffa657">'                        + (last.volume/1e6).toFixed(2) + 'M</b>' +
-      (sigs.length ? '  &nbsp;' + sigs.join(' &nbsp;') : '');
-  },
-
-  // ── marker drawing helper ─────────────────────────────────
-  // (module-level function so draw() can call it)
-
-  // ── time axis with dotted rules ──────────────────────────
-  _timeAxis(ctx, W, H, PL, PR, PT, PB, total, toX){
-    const MARKS = ['09:15','09:30','10:00','10:30','11:00','11:30',
-                   '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
-    const slotW = (W - PL - PR) / total;
-    ctx.font      = '9px Segoe UI,sans-serif';
-    ctx.fillStyle = '#8b949e';
-    ctx.textAlign = 'center';
-
-    MARKS.forEach(t => {
-      // Find candle with this time label
-      const idx = this.candles.findIndex(c => c.date.slice(11,16) === t);
-      let xp;
-      if (idx >= 0 && toX) {
-        xp = toX(idx);
-      } else {
-        // approximate from session minutes
-        const [hh, mm] = t.split(':').map(Number);
-        const mins = hh*60 + mm - (9*60 + 15);
-        xp = PL + mins * slotW + slotW * 0.5;
+    // ── Signal markers on price panel ────────────────────────
+    const SIG=Math.max(5,candleW*2.0);
+    winVisible.forEach((c,wi)=>{
+      const xc=toX(zS+wi);
+      // buy markers below candle
+      const buyY=toY(c.low)+SIG+2;
+      if(c.vol_buy_signal){
+        _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
+        if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
+      } else if(c.signal_r2g) {
+        _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold');
+      } else if(c.parabolic_rise) {
+        _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold');
+      } else if(c.explosive_rise) {
+        _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*1.6,'');
+      } else if(c.confirmed_rise) {
+        _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*1.4,'');
+      } else if(c.basic_rise) {
+        _drawMarker(ctx,xc,buyY,'▲','#b3f5b3',SIG*1.2,'');
+      } else if(c.escape) {
+        _drawMarker(ctx,xc,buyY,'◆','#d2a8ff',SIG*1.4,'bold');
       }
-
-      ctx.strokeStyle = '#21262d'; ctx.lineWidth = 0.5;
-      ctx.setLineDash([2, 2]);
-      ctx.beginPath(); ctx.moveTo(xp, PT); ctx.lineTo(xp, H-PB); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillText(t, xp, H - PB + 12);
+      // sell markers above candle
+      const sellY=toY(c.high)-SIG-2;
+      if(c.vol_sell_signal){
+        _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
+        if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
+      } else if(c.signal_g2r) {
+        _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold');
+      } else if(c.crash_risk) {
+        _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold');
+      } else if(c.major_fall) {
+        _drawMarker(ctx,xc,sellY,'▼','#ffa657',SIG*1.6,'');
+      }
     });
-    ctx.textAlign = 'left';
+
+    // ── Legend (top-left of price panel, matching main chart) ─
+    this._legend(ctx, PL+4, pT+4);
+
+    // ── Title ────────────────────────────────────────────────
+    ctx.fillStyle='#c9d1d9'; ctx.font='bold 11px Segoe UI,sans-serif'; ctx.textAlign='center';
+    const dateStr=visible[0].date.slice(0,10).split('-').reverse().join(' ').replace(/(\d+) (\d+) (\d+)/,(_,d,m,y)=>{
+      const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return d+' '+months[parseInt(m)-1]+' '+y;
+    });
+    ctx.fillText('NSE · '+this._ticker+' · '+dateStr+' · 09:15–15:30 IST · 1-Min', W/2, pT-8);
+    ctx.textAlign='left';
+
+    // ════════════════════════════════════════════════════════
+    // PANEL 2 — EXCESS COMBINED VOLUME
+    // ════════════════════════════════════════════════════════
+    const cvVals =winVisible.map(c=>c.combined_volume??0);
+    const smVals =winVisible.map(c=>c.smoothed_volume??null);
+    const allVol =[...cvVals, ...smVals.filter(v=>v!=null)];
+    const vAbsMax=Math.max(...allVol.map(Math.abs),1);
+    const vYMin=-vAbsMax*1.12, vYMax=vAbsMax*1.12;
+    const toVY=v=>vT+(1-(v-vYMin)/(vYMax-vYMin))*vH;
+    const vZero=toVY(0);
+
+    // vol grid
+    ctx.font='8px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='right';
+    [-1,-0.5,0,0.5,1].forEach(f=>{
+      const yv=vAbsMax*f, yp=toVY(yv);
+      if(yp<vT||yp>vT+vH)return;
+      ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.5;
+      ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
+      const label=Math.abs(yv)>=1000?(yv/1000).toFixed(0)+'k':yv.toFixed(0);
+      ctx.fillText(label,PL-3,yp+3);
+    });
+    ctx.textAlign='left';
+
+    // zero line
+    ctx.strokeStyle='#8b949e'; ctx.lineWidth=0.8;
+    ctx.beginPath(); ctx.moveTo(PL,vZero); ctx.lineTo(W-PR,vZero); ctx.stroke();
+
+    // fill path
+    ctx.save();
+    ctx.beginPath();
+    if(winVisible.length){
+      ctx.moveTo(toX(zS),vZero);
+      winVisible.forEach((c,wi)=>ctx.lineTo(toX(zS+wi),toVY(c.combined_volume??0)));
+      ctx.lineTo(toX(zS+winVisible.length-1),vZero);
+      ctx.closePath();
+    }
+    ctx.clip();
+    ctx.fillStyle='rgba(38,166,65,0.30)';  ctx.fillRect(PL,vT,chartW,Math.max(0,vZero-vT));
+    ctx.fillStyle='rgba(248,81,73,0.30)';  ctx.fillRect(PL,vZero,chartW,vH);
+    ctx.restore();
+
+    // combined vol line (orange like main chart)
+    ctx.beginPath(); ctx.strokeStyle='#ffa657'; ctx.lineWidth=1.0;
+    winVisible.forEach((c,wi)=>{ const xp=toX(zS+wi),yp=toVY(c.combined_volume??0); wi===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp); });
+    ctx.stroke();
+
+    // smoothed vol line (blue)
+    let smS=false;
+    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.6;
+    winVisible.forEach((c,wi)=>{
+      const v=c.smoothed_volume; if(v==null)return;
+      const xp=toX(zS+wi),yp=toVY(v);
+      smS?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),smS=true);
+    });
+    ctx.stroke();
+
+    // vol buy/sell markers on excess panel
+    winVisible.forEach((c,wi)=>{
+      const i=zS+wi;
+      const xc=toX(i), yp=toVY(c.combined_volume??0);
+      if(c.vol_buy_signal){
+        _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
+        const lbl=c.date.slice(11,16)+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'');
+        _drawLabel(ctx,xc,yp-22,lbl,'#26a641','#0d1117');
+      }
+      if(c.vol_sell_signal){
+        _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
+        const lbl=c.date.slice(11,16)+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'');
+        _drawLabel(ctx,xc,yp+22,lbl,'#f85149','#0d1117');
+      }
+    });
+
+    // ════════════════════════════════════════════════════════
+    // PANEL 3 — VWAP DEV %
+    // ════════════════════════════════════════════════════════
+    const devVals=winVisible.map(c=>c.vwap_dev??null).filter(v=>v!=null);
+    let dAbsMax=Math.max(...devVals.map(Math.abs),0.1);
+    const dYMin=-dAbsMax*1.2, dYMax=dAbsMax*1.2;
+    const toDY=v=>dT+(1-(v-dYMin)/(dYMax-dYMin))*dH;
+    const dZero=toDY(0);
+
+    // dev grid
+    ctx.font='8px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='right';
+    [-1,-0.5,0,0.5,1].forEach(f=>{
+      const yv=dAbsMax*f, yp=toDY(yv);
+      if(yp<dT||yp>dT+dH)return;
+      ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.5;
+      ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
+      ctx.fillText(yv.toFixed(2)+'%',PL-3,yp+3);
+    });
+    ctx.textAlign='left';
+
+    // zero line
+    ctx.strokeStyle='#8b949e'; ctx.lineWidth=0.8;
+    ctx.beginPath(); ctx.moveTo(PL,dZero); ctx.lineTo(W-PR,dZero); ctx.stroke();
+
+    // fill
+    ctx.save();
+    const devBars=winVisible.map((c,wi)=>({c,i:zS+wi})).filter(({c})=>c.vwap_dev!=null);
+    if(devBars.length){
+      ctx.beginPath();
+      ctx.moveTo(toX(devBars[0].i),dZero);
+      devBars.forEach(({c,i})=>ctx.lineTo(toX(i),toDY(c.vwap_dev)));
+      ctx.lineTo(toX(devBars[devBars.length-1].i),dZero);
+      ctx.closePath(); ctx.clip();
+      ctx.fillStyle='rgba(38,166,65,0.40)';  ctx.fillRect(PL,dT,chartW,Math.max(0,dZero-dT));
+      ctx.fillStyle='rgba(248,81,73,0.40)';  ctx.fillRect(PL,dZero,chartW,dH);
+    }
+    ctx.restore();
+
+    // dev line
+    let dvS=false;
+    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.2;
+    winVisible.forEach((c,wi)=>{
+      if(c.vwap_dev==null)return;
+      const xp=toX(zS+wi),yp=toDY(c.vwap_dev);
+      dvS?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),dvS=true);
+    });
+    ctx.stroke();
+
+    // ════════════════════════════════════════════════════════
+    // SHARED TIME AXIS — dotted verticals spanning all panels
+    // ════════════════════════════════════════════════════════
+    this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,toX,zS,zE);
+
+    // ── Info bar ─────────────────────────────────────────────
+    const b2=last.close>=last.open;
+    const sigs=[];
+    if(last.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(last.percent_diff!=null?' +'+last.percent_diff.toFixed(0)+'%':'')+'</span>');
+    if(last.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(last.percent_diff!=null?' '+last.percent_diff.toFixed(0)+'%':'')+'</span>');
+    if(last.signal_r2g)      sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
+    if(last.signal_g2r)      sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
+    if(last.parabolic_rise)  sigs.push('<span style="color:#ffd700">Parabolic</span>');
+    if(last.explosive_rise)  sigs.push('<span style="color:#00e5ff">Explosive</span>');
+    if(last.confirmed_rise)  sigs.push('<span style="color:#3fb950">Confirmed</span>');
+    if(last.crash_risk)      sigs.push('<span style="color:#ff7b72">Crash⚠</span>');
+    if(last.major_fall)      sigs.push('<span style="color:#ffa657">MajFall</span>');
+    if(last.escape)          sigs.push('<span style="color:#d2a8ff">Escape</span>');
+    document.getElementById('rpl-ohlcv').innerHTML=
+      'O <b style="color:'+(b2?'#26a641':'#f85149')+'">'+last.open.toFixed(2)+'</b>  '+
+      'H <b style="color:#26a641">'+last.high.toFixed(2)+'</b>  '+
+      'L <b style="color:#f85149">'+last.low.toFixed(2)+'</b>  '+
+      'C <b style="color:'+(b2?'#26a641':'#f85149')+'">'+last.close.toFixed(2)+'</b>  '+
+      'Vol <b style="color:#ffa657">'+(last.volume/1e6).toFixed(2)+'M</b>'+
+      (sigs.length?'  &nbsp;'+sigs.join(' &nbsp;'):'');
   },
 
-  // ── hover: show OHLCV for candle under mouse ─────────────
+  // ── Legend box in top-left of price panel ────────────────
+  _legend(ctx, x, y){
+    const items=[
+      {col:'#58a6ff', lw:2,   ls:null,  lbl:'VWAP'},
+      {col:'#d0d0d0', lw:1.1, ls:[4,3], lbl:'Gravity'},
+      {col:'#26a641', lw:1,   ls:[3,4], lbl:'ORB 0%'},
+      {col:'#58a6ff', lw:1,   ls:[3,4], lbl:'ORB 50%'},
+      {col:'#f85149', lw:1,   ls:[3,4], lbl:'ORB 100%'},
+      {mrk:'▼', col:'#f85149', lbl:'G→R Flip'},
+      {mrk:'▲', col:'#26a641', lbl:'R→G Flip'},
+      {mrk:'▲', col:'#00e5ff', lbl:'Vol Buy ≥+25%'},
+      {mrk:'▼', col:'#ff9f00', lbl:'Vol Sell ≤-25%'},
+      {mrk:'◆', col:'#ff00ff', lbl:'Vol Surge'},
+    ];
+    const cols=2, rows=Math.ceil(items.length/cols);
+    const itemW=110, itemH=13;
+    const boxW=cols*itemW+8, boxH=rows*itemH+8;
+    ctx.fillStyle='rgba(22,27,34,0.85)';
+    ctx.strokeStyle='#30363d'; ctx.lineWidth=0.8;
+    ctx.fillRect(x,y,boxW,boxH);
+    ctx.strokeRect(x,y,boxW,boxH);
+    items.forEach((it,idx)=>{
+      const col=idx%cols, row=Math.floor(idx/cols);
+      const ix=x+6+col*itemW, iy=y+6+row*itemH;
+      if(it.mrk){
+        ctx.fillStyle=it.col; ctx.font='bold 9px Segoe UI,sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(it.mrk,ix+5,iy+5);
+      } else {
+        ctx.save();
+        if(it.ls) ctx.setLineDash(it.ls);
+        ctx.strokeStyle=it.col; ctx.lineWidth=it.lw;
+        ctx.beginPath(); ctx.moveTo(ix,iy+5); ctx.lineTo(ix+10,iy+5); ctx.stroke();
+        ctx.setLineDash([]); ctx.restore();
+      }
+      ctx.fillStyle='#c9d1d9'; ctx.font='8px Segoe UI,sans-serif';
+      ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+      ctx.fillText(it.lbl, ix+13, iy+9);
+    });
+    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  },
+
+  // ── Time axis: dotted vertical lines spanning all panels ─
+  _timeAxis(ctx,W,PL,PR,panelTop,panelBot,total,toX,zS=0,zE=0){
+    const MARKS=['09:15','09:30','10:00','10:30','11:00','11:30',
+                 '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+    const slotW=(W-PL-PR)/total;
+    ctx.font='9px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='center';
+    const _zE = zE || total;
+    MARKS.forEach(t=>{
+      const idx=this.candles.findIndex(c=>c.date.slice(11,16)===t);
+      if(idx>=0 && (idx<zS || idx>=_zE)) return;   // skip marks outside zoom window
+      let xp;
+      if(idx>=0&&toX){ xp=toX(idx); }
+      else { const[hh,mm]=t.split(':').map(Number); xp=PL+(hh*60+mm-(9*60+15))*slotW+slotW*0.5; }
+      if(xp<PL||xp>W-PR) return;
+      ctx.strokeStyle='#21262d'; ctx.lineWidth=0.5; ctx.setLineDash([2,3]);
+      ctx.beginPath(); ctx.moveTo(xp,panelTop); ctx.lineTo(xp,panelBot); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillText(t,xp,panelBot+12);
+    });
+    ctx.textAlign='left';
+  },
+
+  // ── Hover: show OHLCV for candle under mouse ─────────────
   onHover(mx){
-    const vis = this.candles.slice(0, this.cursor);
-    if (!vis.length) return;
-    const slotW = (this.cv().width - this.PL - this.PR) / this.candles.length;
-    const idx   = Math.floor((mx - this.PL) / slotW);
-    if (idx < 0 || idx >= vis.length) return;
-    const c = vis[idx], b = c.close >= c.open;
-    document.getElementById('rpl-ohlcv').innerHTML =
-      '<b style="color:#ffd700">' + c.date.slice(11,16) + '</b>  ' +
-      'O <b style="color:' + (b?'#26a641':'#f85149') + '">' + c.open.toFixed(2)  + '</b>  ' +
-      'H <b style="color:#26a641">'                         + c.high.toFixed(2)  + '</b>  ' +
-      'L <b style="color:#f85149">'                         + c.low.toFixed(2)   + '</b>  ' +
-      'C <b style="color:' + (b?'#26a641':'#f85149') + '">' + c.close.toFixed(2) + '</b>  ' +
-      'Vol <b style="color:#ffa657">'                       + (c.volume/1e6).toFixed(2) + 'M</b>';
+    const vis=this.candles.slice(0,this.cursor);
+    if(!vis.length)return;
+    const slotW=(this.cv().width-68-62)/this.candles.length;
+    const idx=Math.floor((mx-68)/slotW);
+    if(idx<0||idx>=vis.length)return;
+    const c=vis[idx],b=c.close>=c.open;
+    const sigs=[];
+    if(c.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')+'</span>');
+    if(c.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')+'</span>');
+    if(c.signal_r2g)      sigs.push('<span style="color:#26a641">R→G</span>');
+    if(c.signal_g2r)      sigs.push('<span style="color:#f85149">G→R</span>');
+    document.getElementById('rpl-ohlcv').innerHTML=
+      '<b style="color:#ffd700">'+c.date.slice(11,16)+'</b>  '+
+      'O <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.open.toFixed(2)+'</b>  '+
+      'H <b style="color:#26a641">'+c.high.toFixed(2)+'</b>  '+
+      'L <b style="color:#f85149">'+c.low.toFixed(2)+'</b>  '+
+      'C <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.close.toFixed(2)+'</b>  '+
+      'Vol <b style="color:#ffa657">'+(c.volume/1e6).toFixed(2)+'M</b>'+
+      (sigs.length?'  &nbsp;'+sigs.join(' &nbsp;'):'');
+  },
+
+  // ── Zoom helpers ─────────────────────────────────────────
+  // wheelZoom: zoom in/out centered on mouse X position
+  wheelZoom(deltaY, mouseX){
+    if(!this.candles.length) return;
+    const total=this.candles.length;
+    const vis=this.cursor||total;
+    const zS=this.zoomStart, zE=this.zoomEnd||vis;
+    const zLen=zE-zS;
+
+    // factor: scroll up = zoom in (shrink window), down = zoom out
+    const factor = deltaY < 0 ? 0.80 : 1.25;
+    const newLen  = Math.round(Math.max(10, Math.min(vis, zLen*factor)));
+
+    // anchor: keep the bar under the mouse fixed
+    const PL=68, PR=62;
+    const chartW=this.cv().width-PL-PR;
+    const frac=Math.max(0,Math.min(1,(mouseX-PL)/chartW));
+    const anchorBar = Math.round(zS + frac*zLen);
+
+    let newStart=Math.round(anchorBar - frac*newLen);
+    let newEnd  =newStart+newLen;
+    if(newStart<0){newStart=0; newEnd=newLen;}
+    if(newEnd>vis){newEnd=vis; newStart=Math.max(0,vis-newLen);}
+
+    this.zoomStart=newStart;
+    this.zoomEnd  =newEnd;
+    this.draw();
+  },
+
+  // pan: shift zoom window left/right by dx pixels
+  panBy(dBars){
+    if(!this.candles.length) return;
+    const vis=this.cursor||this.candles.length;
+    const zS=this.zoomStart, zE=this.zoomEnd||vis;
+    const zLen=zE-zS;
+    let ns=zS+dBars, ne=zE+dBars;
+    if(ns<0){ns=0;ne=zLen;}
+    if(ne>vis){ne=vis;ns=Math.max(0,vis-zLen);}
+    this.zoomStart=ns; this.zoomEnd=ne;
+    this.draw();
+  },
+
+  // reset zoom to full view
+  resetZoom(){
+    this.zoomStart=0; this.zoomEnd=0; this.draw();
   },
 };
 
-// ── Marker drawing helper (used inside RPL.draw) ────────────────────────────────
+// ── Marker drawing helper ─────────────────────────────────────────────────────
 function _drawMarker(ctx, x, y, char, color, size, weight) {
   ctx.save();
-  ctx.fillStyle  = color;
-  ctx.font       = (weight ? weight + ' ' : '') + size + 'px Segoe UI,sans-serif';
-  ctx.textAlign  = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(char, x, y);
+  ctx.fillStyle=color;
+  ctx.font=(weight?weight+' ':'')+Math.round(size)+'px Segoe UI,sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(char,x,y);
+  ctx.restore();
+}
+
+// ── Label with background box ─────────────────────────────────────────────────
+function _drawLabel(ctx, x, y, text, textCol, bgCol) {
+  ctx.save();
+  ctx.font='bold 7px Segoe UI,sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const tw=ctx.measureText(text).width;
+  const pw=4, ph=3;
+  ctx.fillStyle=bgCol;
+  ctx.fillRect(x-tw/2-pw, y-5-ph, tw+pw*2, 10+ph*2);
+  ctx.strokeStyle=textCol; ctx.lineWidth=0.6;
+  ctx.strokeRect(x-tw/2-pw, y-5-ph, tw+pw*2, 10+ph*2);
+  ctx.fillStyle=textCol;
+  ctx.fillText(text,x,y);
   ctx.restore();
 }
 
@@ -1077,10 +1352,55 @@ $('rpl-progress-wrap').addEventListener('click', e => {
   RPL.seek(Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width)));
 });
 
+// ── Wheel: zoom in/out centered on mouse position ─────────────────────────────
+$('rpl-canvas').addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = $('rpl-canvas').getBoundingClientRect();
+  RPL.wheelZoom(e.deltaY, e.clientX - rect.left);
+}, { passive: false });
+
+// ── Drag to pan ───────────────────────────────────────────────────────────────
+$('rpl-canvas').addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const rect = $('rpl-canvas').getBoundingClientRect();
+  RPL._drag = {
+    startX     : e.clientX - rect.left,
+    startZS    : RPL.zoomStart,
+    startZE    : RPL.zoomEnd || (RPL.cursor || RPL.candles.length),
+  };
+  $('rpl-canvas').style.cursor = 'grabbing';
+});
+
 $('rpl-canvas').addEventListener('mousemove', e => {
   const rect = $('rpl-canvas').getBoundingClientRect();
-  RPL.onHover(e.clientX - rect.left);
+  const mx   = e.clientX - rect.left;
+
+  if (RPL._drag) {
+    const PL=68, PR=62;
+    const chartW = $('rpl-canvas').width - PL - PR;
+    const zLen   = RPL._drag.startZE - RPL._drag.startZS;
+    const slotW  = chartW / zLen;
+    const dBars  = Math.round((RPL._drag.startX - mx) / slotW);
+    const vis    = RPL.cursor || RPL.candles.length;
+
+    let ns = RPL._drag.startZS + dBars;
+    let ne = RPL._drag.startZE + dBars;
+    if (ns < 0)   { ns = 0;   ne = zLen; }
+    if (ne > vis) { ne = vis; ns = Math.max(0, vis - zLen); }
+    RPL.zoomStart = ns;
+    RPL.zoomEnd   = ne;
+    RPL.draw();
+  } else {
+    RPL.onHover(mx);
+  }
 });
+
+['mouseup','mouseleave'].forEach(ev => $('rpl-canvas').addEventListener(ev, () => {
+  RPL._drag = null;
+  $('rpl-canvas').style.cursor = 'crosshair';
+}));
+
+$('rpl-canvas').addEventListener('dblclick', () => RPL.resetZoom());
 
 // ── Init canvas on page load ───────────────────────────────────────────────────
 window.addEventListener('load', () => {
