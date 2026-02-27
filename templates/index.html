@@ -869,17 +869,59 @@ const CCHART = {
     win.forEach((c,wi)=>{const v=c.smoothed_volume;if(v==null)return;const xp=toX(zS+wi),yp=toVY(v);ss?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),ss=true);});
     ctx.stroke();}
 
-    // vol buy/sell markers — include time, pct, close price
+    // vol buy/sell markers — ±20% threshold dotted lines + vertical bar line + marker + label
     win.forEach((c,wi)=>{
-      const xc=toX(zS+wi),yp=toVY(c.combined_volume??0);
+      const xc=toX(zS+wi), cv=c.combined_volume??0, yp=toVY(cv);
+
       if(c.vol_buy_signal){
+        // horizontal dotted line at cv - 20% of |cv| (between signal level and zero)
+        const thresh=cv-Math.abs(cv)*0.20;
+        const threshY=toVY(thresh);
+        if(threshY>=vT && threshY<=vT+vH){
+          ctx.save();
+          ctx.strokeStyle='rgba(38,166,65,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
+          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
+          ctx.setLineDash([]);
+          // small label on right showing the threshold value
+          ctx.fillStyle='rgba(38,166,65,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
+          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
+          ctx.restore();
+        }
+        // vertical dotted line at this bar spanning full panel height
+        ctx.save();
+        ctx.strokeStyle='rgba(38,166,65,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
+        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+        // ▲ marker + label
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
         const lb=c.date.slice(11,16)
           +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
           +' ₹'+c.close.toFixed(1);
         _drawLabel(ctx,xc,yp-24,lb,'#26a641','#0d1117');
       }
+
       if(c.vol_sell_signal){
+        // horizontal dotted line at cv + 20% of |cv| (between signal level and zero)
+        const thresh=cv+Math.abs(cv)*0.20;
+        const threshY=toVY(thresh);
+        if(threshY>=vT && threshY<=vT+vH){
+          ctx.save();
+          ctx.strokeStyle='rgba(248,81,73,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
+          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
+          ctx.setLineDash([]);
+          // small label on right
+          ctx.fillStyle='rgba(248,81,73,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
+          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
+          ctx.restore();
+        }
+        // vertical dotted line at this bar
+        ctx.save();
+        ctx.strokeStyle='rgba(248,81,73,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
+        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+        // ▼ marker + label
         _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
         const lb=c.date.slice(11,16)
           +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
@@ -1512,18 +1554,56 @@ const RPL = {
     });
     ctx.stroke();
 
-    // vol buy/sell markers on excess panel — include time, pct, close price
+    // vol buy/sell markers on excess panel — ±20% threshold dotted lines + vertical bar line
     winVisible.forEach((c,wi)=>{
       const i=zS+wi;
-      const xc=toX(i), yp=toVY(c.combined_volume??0);
+      const xc=toX(i), cv=c.combined_volume??0, yp=toVY(cv);
+
       if(c.vol_buy_signal){
+        // horizontal dotted line at cv - 20% of |cv| (between signal level and zero)
+        const thresh=cv-Math.abs(cv)*0.20;
+        const threshY=toVY(thresh);
+        if(threshY>=vT && threshY<=vT+vH){
+          ctx.save();
+          ctx.strokeStyle='rgba(38,166,65,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
+          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle='rgba(38,166,65,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
+          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
+          ctx.restore();
+        }
+        // vertical dotted line at this bar
+        ctx.save();
+        ctx.strokeStyle='rgba(38,166,65,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
+        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
         const lbl=c.date.slice(11,16)
           +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
           +' ₹'+c.close.toFixed(1);
         _drawLabel(ctx,xc,yp-24,lbl,'#26a641','#0d1117');
       }
+
       if(c.vol_sell_signal){
+        // horizontal dotted line at cv + 20% of |cv| (between signal level and zero)
+        const thresh=cv+Math.abs(cv)*0.20;
+        const threshY=toVY(thresh);
+        if(threshY>=vT && threshY<=vT+vH){
+          ctx.save();
+          ctx.strokeStyle='rgba(248,81,73,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
+          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle='rgba(248,81,73,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
+          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
+          ctx.restore();
+        }
+        // vertical dotted line at this bar
+        ctx.save();
+        ctx.strokeStyle='rgba(248,81,73,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
+        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
         _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
         const lbl=c.date.slice(11,16)
           +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
