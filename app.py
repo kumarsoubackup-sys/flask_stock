@@ -91,7 +91,14 @@ VOL_MULTIPLIER   = 1.5
 USE_RSI          = True
 RSI_THRESHOLD    = 50
 DETECT_BREAKOUTS = True
-EXCESS_SMOOTH_BARS = 100
+EXCESS_SMOOTH_BARS = 30
+
+def _get_smooth_bars(default: int = EXCESS_SMOOTH_BARS) -> int:
+    """Read smooth_bars query param, clamped 5-300."""
+    try:
+        return max(5, min(300, int(request.args.get("smooth_bars", default))))
+    except (ValueError, TypeError):
+        return default
 
 # ═══════════════════════════════════════════════════════════
 # CHART CONSTANTS
@@ -494,7 +501,7 @@ def apply_screen(df: pd.DataFrame, min_volume: int = 6_000_000) -> pd.DataFrame:
 # CHART GENERATOR  (3-panel: Price | Excess Vol | VWAP Dev)
 # ═══════════════════════════════════════════════════════════
 
-def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
+def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOOTH_BARS) -> io.BytesIO:
     """Build the 3-panel chart and return it as a PNG BytesIO buffer."""
 
     comb_vals     = df["combined_volume"].values
@@ -653,16 +660,16 @@ def generate_chart(df: pd.DataFrame, ticker: str) -> io.BytesIO:
     ax_dev.set_ylabel("VWAP Dev %", color=TEXT_COL, fontsize=8)
 
     # ── Panel 3: Excess Combined Volume ──
-    # ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals>=0), color=UP_COL, alpha=0.25)
-    # ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals<0),  color=DN_COL, alpha=0.25)
+    ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals>=0), color=UP_COL, alpha=0.25)
+    ax_excess.fill_between(xs, comb_vals, 0, where=(comb_vals<0),  color=DN_COL, alpha=0.25)
     ax_excess.plot(xs, comb_vals,   color=COMB_COL,   lw=1.0, alpha=0.8, label="Combined Vol")
-    ax_excess.plot(xs, smooth_vals, color=SMOOTH_COL, lw=1.5, label=f"Smoothed ({EXCESS_SMOOTH_BARS}b)")
+    ax_excess.plot(xs, smooth_vals, color=SMOOTH_COL, lw=1.5, label=f"Smoothed ({smooth_bars}b)")
     ax_excess.axhline(0, color=TEXT_COL, lw=0.8)
 
     # Percent diff on twin axis (right side)
     ax_pct = ax_excess.twinx()
     valid_pct = np.where(np.isfinite(pct_diff_vals), pct_diff_vals, np.nan)
-    ax_pct.plot(xs, valid_pct, color="#2986cc", lw=0.8, alpha=0.6, label="% Diff")
+    ax_pct.plot(xs, valid_pct, color="#ffa657", lw=0.8, alpha=0.6, label="% Diff")
     ax_pct.axhline( 25, color=UP_COL, lw=0.6, ls="--", alpha=0.5)
     ax_pct.axhline(-25, color=DN_COL, lw=0.6, ls="--", alpha=0.5)
     ax_pct.set_ylabel("% Diff", color="#ffa657", fontsize=7)
@@ -800,7 +807,7 @@ def get_replay_data(ticker):
 
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
-        result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+        result = calculate_excess_combined_intraday_volume(result, smooth_bars=_get_smooth_bars())
 
         # Filter to last session only (09:15–15:30 IST)
         last_date = result.index[-1].date()
@@ -872,7 +879,7 @@ def get_screener(ticker):
 
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
-        result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+        result = calculate_excess_combined_intraday_volume(result, smooth_bars=_get_smooth_bars())
 
         return jsonify({
             "ticker":   ticker.upper(),
@@ -896,7 +903,8 @@ def get_chart(ticker):
 
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
-        result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+        _sb    = _get_smooth_bars()
+        result = calculate_excess_combined_intraday_volume(result, smooth_bars=_sb)
         min_vol = int(request.args.get('min_vol', 6_000_000))
         result = apply_screen(result, min_volume=min_vol)   # needs full history for 500-bar SMA
 
@@ -911,7 +919,7 @@ def get_chart(ticker):
         if plot_df.empty:
             return jsonify({"error": "No session bars to plot"}), 404
 
-        buf = generate_chart(plot_df, ticker.upper())
+        buf = generate_chart(plot_df, ticker.upper(), smooth_bars=_sb)
         return send_file(buf, mimetype="image/png",
                          download_name=f"{ticker.upper()}_chart.png")
 
@@ -971,13 +979,13 @@ def _first_signal_time(result, signal_cols: list) -> str | None:
     return None
 
 
-def _score_symbol(ticker: str, interval: str = "1m") -> dict:
+def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_SMOOTH_BARS) -> dict:
     """Fetch latest data for one symbol and compute a buy/sell score."""
     try:
         raw_df = fetch_ohlcv(ticker, interval=interval, range_="1d")
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
-        result = calculate_excess_combined_intraday_volume(result, smooth_bars=EXCESS_SMOOTH_BARS)
+        result = calculate_excess_combined_intraday_volume(result, smooth_bars=smooth_bars)
         s      = ind.summary_dict()
 
         # ── Buy score (0-8) ──────────────────────────────────────────────────
@@ -1054,10 +1062,11 @@ def run_scan():
     import concurrent.futures
     interval = request.args.get("interval", "1m")
     top_n    = int(request.args.get("top_n", 10))
+    smooth_b = _get_smooth_bars()
 
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(_score_symbol, sym, interval): sym for sym in SCAN_SYMBOLS}
+        futures = {ex.submit(_score_symbol, sym, interval, smooth_b): sym for sym in SCAN_SYMBOLS}
         for fut in concurrent.futures.as_completed(futures):
             results.append(fut.result())
 
@@ -1305,4 +1314,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Server running → http://localhost:{port}")
     app.run(host="0.0.0.0", port=port, debug=True)
-
