@@ -263,7 +263,6 @@
 <div id="tab-bar">
   <button class="tab-btn active" data-tab="chart">📊 Chart</button>
   <button class="tab-btn"       data-tab="scanner">🔍 Scanner</button>
-  <button class="tab-btn"       data-tab="evol">📈 Excess Vol</button>
   <button class="tab-btn"       data-tab="replay">▶ Replay</button>
 </div>
 
@@ -380,22 +379,6 @@
   <div id="scan-status">Ready — press Run Scanner to begin</div>
 </div>
 
-<!-- ═══════════════ EXCESS VOL TAB ═══════════════ -->
-<div id="evol-panel" class="tab-panel" style="flex-direction:column;">
-
-  <div id="evol-toolbar" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#161b22;border-bottom:1px solid #21262d;flex-shrink:0;">
-    <button class="rpl-btn" id="evol-load-btn" onclick="evolLoad()">📥 Load Data</button>
-    <button class="rpl-btn" id="evol-zoom-btn" onclick="EVOL.resetZoom()" style="background:#21262d;color:#c9d1d9;">🔍 Full</button>
-    <span style="font-size:11px;color:#8b949e;margin-left:4px;">scroll=X-zoom · Ctrl+scroll=Y-zoom · drag=pan · dbl-click=reset</span>
-    <span id="evol-status" style="margin-left:auto;font-size:11px;color:#8b949e;"></span>
-  </div>
-
-  <div id="evol-body" style="flex:1;position:relative;overflow:hidden;min-height:0;">
-    <canvas id="evol-canvas" style="display:block;width:100%;height:100%;cursor:crosshair;"></canvas>
-  </div>
-
-</div>
-
 <!-- ═══════════════ REPLAY TAB ═══════════════ -->
 <div id="replay-panel" class="tab-panel">
 
@@ -479,15 +462,10 @@ function switchTab(name) {
   if (panel) {
     panel.classList.add('active');
     if (name === 'replay') {
+      // Double rAF: wait until panel is fully painted and has real pixel dimensions
       requestAnimationFrame(() => requestAnimationFrame(() => {
         RPL.resize();
         RPL.draw();
-      }));
-    }
-    if (name === 'evol') {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        EVOL.resize();
-        EVOL.draw();
       }));
     }
   }
@@ -891,59 +869,17 @@ const CCHART = {
     win.forEach((c,wi)=>{const v=c.smoothed_volume;if(v==null)return;const xp=toX(zS+wi),yp=toVY(v);ss?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),ss=true);});
     ctx.stroke();}
 
-    // vol buy/sell markers — ±20% threshold dotted lines + vertical bar line + marker + label
+    // vol buy/sell markers — include time, pct, close price
     win.forEach((c,wi)=>{
-      const xc=toX(zS+wi), cv=c.combined_volume??0, yp=toVY(cv);
-
+      const xc=toX(zS+wi),yp=toVY(c.combined_volume??0);
       if(c.vol_buy_signal){
-        // horizontal dotted line at cv - 20% of |cv| (between signal level and zero)
-        const thresh=cv-Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(38,166,65,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          // small label on right showing the threshold value
-          ctx.fillStyle='rgba(38,166,65,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar spanning full panel height
-        ctx.save();
-        ctx.strokeStyle='rgba(38,166,65,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        // ▲ marker + label
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
         const lb=c.date.slice(11,16)
           +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
           +' ₹'+c.close.toFixed(1);
         _drawLabel(ctx,xc,yp-24,lb,'#26a641','#0d1117');
       }
-
       if(c.vol_sell_signal){
-        // horizontal dotted line at cv + 20% of |cv| (between signal level and zero)
-        const thresh=cv+Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(248,81,73,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          // small label on right
-          ctx.fillStyle='rgba(248,81,73,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar
-        ctx.save();
-        ctx.strokeStyle='rgba(248,81,73,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        // ▼ marker + label
         _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
         const lb=c.date.slice(11,16)
           +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
@@ -1129,463 +1065,6 @@ const CCHART = {
     if(cv.style.display!=='none'){ CCHART.resize(); CCHART.draw(); }
   });
 })();
-
-
-// ════════════════════════════════════════════════════════════
-// EVOL — Dedicated Excess Volume tab
-// Full-canvas chart with independent X and Y zoom.
-//   X zoom : scroll wheel (centered on mouse)
-//   Y zoom : Ctrl + scroll wheel (centered on mouse Y)
-//   Pan    : click + drag
-//   Reset  : double-click or 🔍 Full button
-// ════════════════════════════════════════════════════════════
-const EVOL = {
-  candles   : [],
-  _ticker   : '',
-
-  // X zoom: index window into candles[]
-  zoomStart : 0,
-  zoomEnd   : 0,   // 0 = full
-
-  // Y zoom: value window for the excess vol axis
-  yMin      : null,   // null = auto from data
-  yMax      : null,
-
-  _drag     : null,   // {startX, startY, startZS, startZE, startYMin, startYMax}
-
-  PL : 72,   // left padding (Y axis)
-  PR : 64,   // right padding (threshold labels)
-  PT : 36,   // top
-  PB : 28,   // bottom (time axis)
-
-  cv () { return document.getElementById('evol-canvas'); },
-  ctx() { return this.cv().getContext('2d'); },
-
-  resize(){
-    const cv=this.cv(), body=document.getElementById('evol-body');
-    const w=body.clientWidth, h=body.clientHeight;
-    if(w>0&&h>0){ cv.width=w; cv.height=h; }
-  },
-
-  load(candles, ticker){
-    this.candles   = candles;
-    this._ticker   = (ticker||'').replace('.NS','');
-    this.zoomStart = 0;
-    this.zoomEnd   = 0;
-    this.yMin      = null;
-    this.yMax      = null;
-    this.resize();
-    this.draw();
-  },
-
-  // ── zoom helpers ─────────────────────────────────────────
-  wheelXZoom(deltaY, mouseX){
-    if(!this.candles.length) return;
-    const total=this.candles.length;
-    const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=zE-zS;
-    const factor=deltaY<0?0.80:1.25;
-    const newLen=Math.round(Math.max(5, Math.min(total, zLen*factor)));
-    const chartW=this.cv().width-this.PL-this.PR;
-    const frac=Math.max(0,Math.min(1,(mouseX-this.PL)/chartW));
-    const anchor=Math.round(zS+frac*zLen);
-    let ns=Math.round(anchor-frac*newLen), ne=ns+newLen;
-    if(ns<0){ns=0;ne=newLen;}
-    if(ne>total){ne=total;ns=Math.max(0,total-newLen);}
-    this.zoomStart=ns; this.zoomEnd=ne;
-    // reset Y zoom when X changes so auto-scaling re-applies
-    this.yMin=null; this.yMax=null;
-    this.draw();
-  },
-
-  wheelYZoom(deltaY, mouseY){
-    if(!this.candles.length) return;
-    const cv=this.cv();
-    const H=cv.height, PT=this.PT, PB=this.PB;
-    const chartH=H-PT-PB;
-
-    // get current Y bounds (auto if null)
-    const {yMin:curMin, yMax:curMax} = this._currentYBounds();
-    const factor=deltaY<0?0.82:1.22;
-
-    // keep value under mouse fixed
-    const frac=Math.max(0,Math.min(1,(mouseY-PT)/chartH));
-    const anchor=curMax-frac*(curMax-curMin);
-
-    const newRange=(curMax-curMin)*factor;
-    this.yMin=anchor-frac*newRange;
-    this.yMax=anchor+(1-frac)*newRange;
-    this.draw();
-  },
-
-  _currentYBounds(){
-    const total=this.candles.length;
-    const zS=this.zoomStart, zE=this.zoomEnd||total;
-    const win=this.candles.slice(zS,zE);
-    if(this.yMin!==null && this.yMax!==null) return {yMin:this.yMin, yMax:this.yMax};
-    // auto: fit combined + smoothed values
-    const vals=[];
-    win.forEach(c=>{
-      vals.push(c.combined_volume??0);
-      if(c.smoothed_volume!=null) vals.push(c.smoothed_volume);
-    });
-    if(!vals.length) return {yMin:-1,yMax:1};
-    const abs=Math.max(...vals.map(Math.abs),1);
-    return {yMin:-abs*1.15, yMax:abs*1.15};
-  },
-
-  resetZoom(){
-    this.zoomStart=0; this.zoomEnd=0;
-    this.yMin=null; this.yMax=null;
-    this.draw();
-  },
-
-  // ── main draw ────────────────────────────────────────────
-  draw(){
-    const cv=this.cv(), ctx=this.ctx();
-    const W=cv.width, H=cv.height;
-    if(!W||!H) return;
-
-    const candles=this.candles;
-    const total=candles.length;
-    const {PL,PR,PT,PB}=this;
-    const chartW=W-PL-PR, chartH=H-PT-PB;
-
-    // background
-    ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,H);
-
-    if(!total){
-      ctx.fillStyle='#8b949e'; ctx.font='14px Segoe UI,sans-serif'; ctx.textAlign='center';
-      ctx.fillText('📥 Load Data to begin',W/2,H/2);
-      ctx.textAlign='left'; return;
-    }
-
-    // ── X window ────────────────────────────────────────────
-    const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=Math.max(1,zE-zS);
-    const slotW=chartW/zLen;
-    const candleW=Math.max(1.5,slotW*0.72);
-    const hw=candleW/2;
-    const toX=i=>PL+(i-zS+0.5)*slotW;
-    const win=candles.slice(zS,zE);
-
-    // ── Y window ────────────────────────────────────────────
-    const {yMin,yMax}=this._currentYBounds();
-    const yRange=yMax-yMin||1;
-    const toY=v=>PT+(1-(v-yMin)/yRange)*chartH;
-    const yZero=toY(0);
-
-    // ── Y grid ──────────────────────────────────────────────
-    // Generate ~6 nice grid levels spanning yMin..yMax
-    const niceStep = (range,steps)=>{ const r=range/steps; const p=Math.pow(10,Math.floor(Math.log10(r))); return Math.ceil(r/p)*p; };
-    const step=niceStep(Math.abs(yMax-yMin),6);
-    const gridStart=Math.ceil(yMin/step)*step;
-
-    ctx.font='9px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='right';
-    for(let v=gridStart; v<=yMax+step*0.01; v+=step){
-      const yp=toY(v);
-      if(yp<PT-2||yp>PT+chartH+2) continue;
-      ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.5;
-      ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
-      const lbl=Math.abs(v)>=1000?(v/1000).toFixed(1)+'k':v.toFixed(0);
-      ctx.fillText(lbl,PL-4,yp+3);
-    }
-    ctx.textAlign='left';
-
-    // zero line
-    if(yZero>=PT && yZero<=PT+chartH){
-      ctx.strokeStyle='#8b949e'; ctx.lineWidth=0.9;
-      ctx.beginPath(); ctx.moveTo(PL,yZero); ctx.lineTo(W-PR,yZero); ctx.stroke();
-      ctx.fillStyle='#556070'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='right';
-      ctx.fillText('0',PL-4,yZero+3);
-      ctx.textAlign='left';
-    }
-
-    // ── combined vol line — GREEN ────────────────────────────
-    ctx.beginPath(); ctx.strokeStyle='#26a641'; ctx.lineWidth=1.5;
-    win.forEach((c,wi)=>{
-      const xp=toX(zS+wi),yp=toY(c.combined_volume??0);
-      wi===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp);
-    });
-    ctx.stroke();
-
-    // ── smoothed vol line — RED ──────────────────────────────
-    {let ss=false;
-    ctx.beginPath(); ctx.strokeStyle='#f85149'; ctx.lineWidth=2.0;
-    win.forEach((c,wi)=>{
-      const v=c.smoothed_volume; if(v==null)return;
-      const xp=toX(zS+wi),yp=toY(v);
-      ss?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),ss=true);
-    });
-    ctx.stroke();}
-
-    // ── markers: ±20% threshold lines + vertical bar + label ─
-    win.forEach((c,wi)=>{
-      const xc=toX(zS+wi), cv=c.combined_volume??0, yp=toY(cv);
-
-      if(c.vol_buy_signal){
-        // horizontal dotted threshold at cv - 20%|cv|
-        const thresh=cv-Math.abs(cv)*0.20;
-        const thY=toY(thresh);
-        if(thY>=PT-2 && thY<=PT+chartH+2){
-          ctx.save();
-          ctx.strokeStyle='rgba(38,166,65,0.75)'; ctx.lineWidth=1.1; ctx.setLineDash([5,4]);
-          ctx.beginPath(); ctx.moveTo(PL,thY); ctx.lineTo(W-PR,thY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(38,166,65,0.8)'; ctx.font='bold 8px Segoe UI,sans-serif';
-          ctx.textAlign='left';
-          const lv=Math.abs(thresh)>=1000?(thresh/1000).toFixed(1)+'k':thresh.toFixed(0);
-          ctx.fillText(lv, W-PR+3, thY+3);
-          ctx.restore();
-        }
-        // vertical dotted bar line
-        ctx.save();
-        ctx.strokeStyle='rgba(38,166,65,0.25)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,PT); ctx.lineTo(xc,PT+chartH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        // ▲ marker
-        _drawMarker(ctx,xc,yp-12,'▲','#26a641',13,'bold');
-        // label box with time + pct + close
-        const lb=c.date.slice(11,16)
-          +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
-          +' ₹'+c.close.toFixed(1);
-        _drawLabel(ctx,xc,yp-28,lb,'#26a641','#0d1117');
-      }
-
-      if(c.vol_sell_signal){
-        // horizontal dotted threshold at cv + 20%|cv|
-        const thresh=cv+Math.abs(cv)*0.20;
-        const thY=toY(thresh);
-        if(thY>=PT-2 && thY<=PT+chartH+2){
-          ctx.save();
-          ctx.strokeStyle='rgba(248,81,73,0.75)'; ctx.lineWidth=1.1; ctx.setLineDash([5,4]);
-          ctx.beginPath(); ctx.moveTo(PL,thY); ctx.lineTo(W-PR,thY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(248,81,73,0.8)'; ctx.font='bold 8px Segoe UI,sans-serif';
-          ctx.textAlign='left';
-          const lv=Math.abs(thresh)>=1000?(thresh/1000).toFixed(1)+'k':thresh.toFixed(0);
-          ctx.fillText(lv, W-PR+3, thY+3);
-          ctx.restore();
-        }
-        // vertical dotted bar line
-        ctx.save();
-        ctx.strokeStyle='rgba(248,81,73,0.25)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,PT); ctx.lineTo(xc,PT+chartH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        // ▼ marker
-        _drawMarker(ctx,xc,yp+12,'▼','#f85149',13,'bold');
-        const lb=c.date.slice(11,16)
-          +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
-          +' ₹'+c.close.toFixed(1);
-        _drawLabel(ctx,xc,yp+28,lb,'#f85149','#0d1117');
-      }
-    });
-
-    // ── border lines around chart area ──────────────────────
-    ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
-    ctx.strokeRect(PL,PT,chartW,chartH);
-
-    // ── Y axis label ─────────────────────────────────────────
-    ctx.save();
-    ctx.fillStyle='#8b949e'; ctx.font='bold 9px Segoe UI,sans-serif';
-    ctx.translate(13, PT+chartH/2);
-    ctx.rotate(-Math.PI/2);
-    ctx.textAlign='center';
-    ctx.fillText('Excess Combined Volume', 0, 0);
-    ctx.restore();
-
-    // ── Y zoom indicator ─────────────────────────────────────
-    if(this.yMin!==null){
-      ctx.fillStyle='#30363d'; ctx.fillRect(W-PR-1,PT,PR,18);
-      ctx.fillStyle='#58a6ff'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='left';
-      ctx.fillText('Y-zoom active · Ctrl+scroll',W-PR+3,PT+11);
-      ctx.textAlign='left';
-    }
-
-    // ── Title ────────────────────────────────────────────────
-    ctx.fillStyle='#c9d1d9'; ctx.font='bold 11px Segoe UI,sans-serif'; ctx.textAlign='center';
-    let dateStr='';
-    if(candles.length){
-      const d0=candles[0].date.slice(0,10).split('-');
-      const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      dateStr=' · '+d0[2]+' '+months[+d0[1]-1]+' '+d0[0];
-    }
-    ctx.fillText('NSE · '+this._ticker+dateStr+' · Excess Combined Volume · 1-Min',W/2,PT-10);
-
-    // ── Legend ───────────────────────────────────────────────
-    const legItems=[
-      {col:'#26a641',lw:1.5,lbl:'Combined Vol'},
-      {col:'#f85149',lw:2.0,lbl:'Smoothed (100b)'},
-      {mrk:'▲',col:'#26a641',lbl:'Vol Buy ≥+25%'},
-      {mrk:'▼',col:'#f85149',lbl:'Vol Sell ≤-25%'},
-    ];
-    let lx=PL+8, ly=PT+8;
-    ctx.fillStyle='rgba(22,27,34,0.85)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.8;
-    ctx.fillRect(lx-4,ly-4,200,legItems.length*14+8);
-    ctx.strokeRect(lx-4,ly-4,200,legItems.length*14+8);
-    legItems.forEach((it,idx)=>{
-      const iy=ly+idx*14;
-      if(it.mrk){
-        ctx.fillStyle=it.col; ctx.font='bold 10px Segoe UI,sans-serif';
-        ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText(it.mrk,lx+5,iy+5);
-      } else {
-        ctx.save(); ctx.strokeStyle=it.col; ctx.lineWidth=it.lw;
-        ctx.beginPath(); ctx.moveTo(lx,iy+5); ctx.lineTo(lx+10,iy+5); ctx.stroke();
-        ctx.restore();
-      }
-      ctx.fillStyle='#c9d1d9'; ctx.font='9px Segoe UI,sans-serif';
-      ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-      ctx.fillText(it.lbl,lx+14,iy+9);
-    });
-    ctx.textBaseline='alphabetic';
-
-    // ── Time axis ────────────────────────────────────────────
-    const MARKS=['09:15','09:30','10:00','10:30','11:00','11:30',
-                 '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
-    const _zE=zE||total;
-    ctx.font='9px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='center';
-    MARKS.forEach(t=>{
-      const idx=candles.findIndex(c=>c.date.slice(11,16)===t);
-      if(idx>=0&&(idx<zS||idx>=_zE)) return;
-      const xp=idx>=0?toX(idx):(()=>{const[hh,mm]=t.split(':').map(Number);return PL+(hh*60+mm-(9*60+15))*slotW+slotW*0.5;})();
-      if(xp<PL||xp>W-PR) return;
-      ctx.strokeStyle='#21262d'; ctx.lineWidth=0.5; ctx.setLineDash([2,3]);
-      ctx.beginPath(); ctx.moveTo(xp,PT); ctx.lineTo(xp,PT+chartH); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillText(t,xp,PT+chartH+14);
-    });
-    ctx.textAlign='left';
-  },
-
-  // ── Hover tooltip → status bar ───────────────────────────
-  onHover(mx, my){
-    if(!this.candles.length) return;
-    const {PL,PR,PT,PB}=this;
-    const zS=this.zoomStart, zE=this.zoomEnd||this.candles.length;
-    const slotW=(this.cv().width-PL-PR)/Math.max(1,zE-zS);
-    const idx=zS+Math.floor((mx-PL)/slotW);
-    if(idx<zS||idx>=Math.min(zE,this.candles.length)) return;
-    const c=this.candles[idx];
-    const cv=(c.combined_volume??0), sm=(c.smoothed_volume??null);
-    const fmtV=v=>Math.abs(v)>=1000?(v/1000).toFixed(1)+'k':v.toFixed(0);
-    $('evol-status').innerHTML=
-      '<b style="color:#ffd700">'+c.date.slice(11,16)+'</b>  '+
-      'Comb <b style="color:#26a641">'+fmtV(cv)+'</b>  '+
-      (sm!=null?'Smooth <b style="color:#f85149">'+fmtV(sm)+'</b>  ':'')+
-      (c.percent_diff!=null?'Δ <b style="color:#ffa657">'+c.percent_diff.toFixed(1)+'%</b>  ':'')+
-      '₹<b style="color:#c9d1d9">'+c.close.toFixed(2)+'</b>';
-
-    // crosshair
-    const cv2=this.cv(),ctx=this.ctx();
-    const {yMin,yMax}=this._currentYBounds();
-    const chartH=cv2.height-PT-PB, chartW=cv2.width-PL-PR;
-    const yRange=yMax-yMin||1;
-    const val=yMax-((my-PT)/chartH)*yRange;
-    const fmtY=v=>Math.abs(v)>=1000?(v/1000).toFixed(1)+'k':v.toFixed(0);
-
-    this.draw();   // redraw clean first
-    ctx.save();
-    ctx.strokeStyle='rgba(139,148,158,0.4)'; ctx.lineWidth=0.7; ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(toX_fn(idx),PT); ctx.lineTo(toX_fn(idx),PT+chartH); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(PL,my); ctx.lineTo(cv2.width-PR,my); ctx.stroke();
-    ctx.setLineDash([]);
-    // Y value badge
-    ctx.fillStyle='#58a6ff'; ctx.fillRect(0,my-8,PL-2,16);
-    ctx.fillStyle='#fff'; ctx.font='bold 8px Segoe UI,sans-serif'; ctx.textAlign='right';
-    ctx.fillText(fmtY(val),PL-4,my+3);
-    ctx.restore();
-
-    function toX_fn(i){ return PL+(i-zS+0.5)*(chartW/Math.max(1,zE-zS)); }
-  },
-};
-
-// ── Wire EVOL canvas events ───────────────────────────────
-(function(){
-  const cv=document.getElementById('evol-canvas');
-
-  cv.addEventListener('wheel',e=>{
-    e.preventDefault();
-    const r=cv.getBoundingClientRect();
-    if(e.ctrlKey || e.altKey){
-      // Y zoom: Ctrl+scroll
-      EVOL.wheelYZoom(e.deltaY, e.clientY-r.top);
-    } else {
-      // X zoom: plain scroll
-      EVOL.wheelXZoom(e.deltaY, e.clientX-r.left);
-    }
-  },{passive:false});
-
-  cv.addEventListener('mousedown',e=>{
-    if(e.button!==0) return;
-    const r=cv.getBoundingClientRect();
-    const {PL,PR}=EVOL;
-    const zS=EVOL.zoomStart, zE=EVOL.zoomEnd||EVOL.candles.length;
-    const {yMin,yMax}=EVOL._currentYBounds();
-    EVOL._drag={
-      startX  : e.clientX-r.left,
-      startY  : e.clientY-r.top,
-      startZS : zS,
-      startZE : zE,
-      startYMin: yMin,
-      startYMax: yMax,
-      slotW   : (cv.width-PL-PR)/Math.max(1,zE-zS),
-      pxPerVal: (cv.height-EVOL.PT-EVOL.PB)/Math.max(1,yMax-yMin),
-    };
-    cv.style.cursor='grabbing';
-  });
-
-  cv.addEventListener('mousemove',e=>{
-    const r=cv.getBoundingClientRect();
-    const mx=e.clientX-r.left, my=e.clientY-r.top;
-    if(EVOL._drag){
-      const d=EVOL._drag;
-      // X pan
-      const dBars=Math.round((d.startX-mx)/d.slotW);
-      const zLen=d.startZE-d.startZS;
-      const total=EVOL.candles.length;
-      let ns=d.startZS+dBars, ne=d.startZE+dBars;
-      if(ns<0){ns=0;ne=zLen;} if(ne>total){ne=total;ns=Math.max(0,total-zLen);}
-      EVOL.zoomStart=ns; EVOL.zoomEnd=ne;
-      // Y pan: drag up = values increase
-      const dVal=(d.startY-my)/d.pxPerVal;
-      EVOL.yMin=d.startYMin+dVal;
-      EVOL.yMax=d.startYMax+dVal;
-      EVOL.draw();
-    } else {
-      EVOL.onHover(mx,my);
-    }
-  });
-
-  ['mouseup','mouseleave'].forEach(ev=>cv.addEventListener(ev,()=>{
-    EVOL._drag=null; cv.style.cursor='crosshair';
-  }));
-
-  cv.addEventListener('dblclick',()=>EVOL.resetZoom());
-
-  window.addEventListener('resize',()=>{
-    if(document.getElementById('evol-panel').classList.contains('active')){
-      EVOL.resize(); EVOL.draw();
-    }
-  });
-})();
-
-async function evolLoad(){
-  const btn=$('evol-load-btn');
-  btn.disabled=true; btn.textContent='⏳ Loading…';
-  $('evol-status').textContent='Fetching data…';
-  try {
-    const res=await fetch('/replay_data/'+getTicker()+'?interval='+getInterval());
-    const json=await res.json();
-    if(json.error) throw new Error(json.error);
-    $('evol-status').textContent='';
-    EVOL.load(json.data||[], getTicker());
-    btn.textContent='✓ '+(getTicker().replace('.NS',''))+' — '+(json.data||[]).length+' bars';
-  } catch(e){
-    $('evol-status').textContent='✗ '+e.message;
-    btn.textContent='📥 Load Data';
-  } finally { btn.disabled=false; }
-}
 
 // ════════════════════════════════════════════════════════════
 // SCANNER TAB
@@ -2033,56 +1512,18 @@ const RPL = {
     });
     ctx.stroke();
 
-    // vol buy/sell markers on excess panel — ±20% threshold dotted lines + vertical bar line
+    // vol buy/sell markers on excess panel — include time, pct, close price
     winVisible.forEach((c,wi)=>{
       const i=zS+wi;
-      const xc=toX(i), cv=c.combined_volume??0, yp=toVY(cv);
-
+      const xc=toX(i), yp=toVY(c.combined_volume??0);
       if(c.vol_buy_signal){
-        // horizontal dotted line at cv - 20% of |cv| (between signal level and zero)
-        const thresh=cv-Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(38,166,65,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(38,166,65,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar
-        ctx.save();
-        ctx.strokeStyle='rgba(38,166,65,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
         _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
         const lbl=c.date.slice(11,16)
           +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
           +' ₹'+c.close.toFixed(1);
         _drawLabel(ctx,xc,yp-24,lbl,'#26a641','#0d1117');
       }
-
       if(c.vol_sell_signal){
-        // horizontal dotted line at cv + 20% of |cv| (between signal level and zero)
-        const thresh=cv+Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(248,81,73,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(248,81,73,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar
-        ctx.save();
-        ctx.strokeStyle='rgba(248,81,73,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
         _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
         const lbl=c.date.slice(11,16)
           +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
