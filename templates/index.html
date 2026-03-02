@@ -838,20 +838,14 @@ const CCHART = {
     win.forEach((c,wi)=>{
       const xc=toX(zS+wi);
       const buyY=toY(c.low)+SIG+2;
-      if(c.vol_buy_signal){
-        _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
-        if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
-      } else if(c.signal_r2g) { _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold'); }
+      if(c.signal_r2g)          { _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold'); }
         else if(c.parabolic_rise){ _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold'); }
         else if(c.explosive_rise){ _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*1.6,''); }
         else if(c.confirmed_rise){ _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*1.4,''); }
         else if(c.basic_rise)    { _drawMarker(ctx,xc,buyY,'▲','#b3f5b3',SIG*1.2,''); }
         else if(c.escape)        { _drawMarker(ctx,xc,buyY,'◆','#d2a8ff',SIG*1.4,'bold'); }
       const sellY=toY(c.high)-SIG-2;
-      if(c.vol_sell_signal){
-        _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
-        if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
-      } else if(c.signal_g2r) { _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold'); }
+      if(c.signal_g2r)      { _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold'); }
         else if(c.crash_risk) { _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold'); }
         else if(c.major_fall) { _drawMarker(ctx,xc,sellY,'▼','#ffa657',SIG*1.6,''); }
     });
@@ -910,67 +904,6 @@ const CCHART = {
     ctx.beginPath(); ctx.strokeStyle='#f85149'; ctx.lineWidth=1.8;
     win.forEach((c,wi)=>{const v=c.smoothed_volume;if(v==null)return;const xp=toX(zS+wi),yp=toVY(v);ss?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),ss=true);});
     ctx.stroke();}
-
-    // vol buy/sell markers — ±20% threshold dotted lines + vertical bar line + marker + label
-    win.forEach((c,wi)=>{
-      const xc=toX(zS+wi), cv=c.combined_volume??0, yp=toVY(cv);
-
-      if(c.vol_buy_signal){
-        // horizontal dotted line at cv - 20% of |cv| (between signal level and zero)
-        const thresh=cv-Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(38,166,65,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          // small label on right showing the threshold value
-          ctx.fillStyle='rgba(38,166,65,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar spanning full panel height
-        ctx.save();
-        ctx.strokeStyle='rgba(38,166,65,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        // ▲ marker + label
-        _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
-        const lb=c.date.slice(11,16)
-          +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
-          +' ₹'+c.close.toFixed(1);
-        _drawLabel(ctx,xc,yp-24,lb,'#26a641','#0d1117');
-      }
-
-      if(c.vol_sell_signal){
-        // horizontal dotted line at cv + 20% of |cv| (between signal level and zero)
-        const thresh=cv+Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(248,81,73,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          // small label on right
-          ctx.fillStyle='rgba(248,81,73,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar
-        ctx.save();
-        ctx.strokeStyle='rgba(248,81,73,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        // ▼ marker + label
-        _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
-        const lb=c.date.slice(11,16)
-          +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
-          +' ₹'+c.close.toFixed(1);
-        _drawLabel(ctx,xc,yp+24,lb,'#f85149','#0d1117');
-      }
-    });
 
     // ═══════════════════════════════════════════════════════
     // PANEL 3 — VWAP DEV %
@@ -1076,8 +1009,7 @@ const CCHART = {
       {col:'#f85149',lw:1,ls:[3,4],lbl:'ORB 100%'},
       {mrk:'▼',col:'#f85149',lbl:'G→R Flip'},
       {mrk:'▲',col:'#26a641',lbl:'R→G Flip'},
-      {mrk:'▲',col:'#00e5ff',lbl:'Vol Buy (cv>0)'},
-      {mrk:'▼',col:'#ff9f00',lbl:'Vol Sell (cv<0)'},
+
 
     ];
     const cols=2,rows=Math.ceil(items.length/cols);
@@ -1488,8 +1420,7 @@ const EVOL = {
     const legItems=[
       {col:'#26a641',lw:1.5,lbl:'Combined Vol'},
       {col:'#f85149',lw:2.0,lbl:'Smoothed (100b)'},
-      {mrk:'▲',col:'#26a641',lbl:'Vol Buy ≥+25%'},
-      {mrk:'▼',col:'#f85149',lbl:'Vol Sell ≤-25%'},
+
     ];
     let lx=PL+8, ly=PT+8;
     ctx.fillStyle='rgba(22,27,34,0.85)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.8;
@@ -2023,10 +1954,7 @@ const RPL = {
       const xc=toX(zS+wi);
       // buy markers below candle
       const buyY=toY(c.low)+SIG+2;
-      if(c.vol_buy_signal){
-        _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
-        if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
-      } else if(c.signal_r2g) {
+      if(c.signal_r2g) {
         _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold');
       } else if(c.parabolic_rise) {
         _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold');
@@ -2041,10 +1969,7 @@ const RPL = {
       }
       // sell markers above candle
       const sellY=toY(c.high)-SIG-2;
-      if(c.vol_sell_signal){
-        _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
-        if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
-      } else if(c.signal_g2r) {
+      if(c.signal_g2r) {
         _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold');
       } else if(c.crash_risk) {
         _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold');
@@ -2108,64 +2033,6 @@ const RPL = {
       smS?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),smS=true);
     });
     ctx.stroke();
-
-    // vol buy/sell markers on excess panel — ±20% threshold dotted lines + vertical bar line
-    winVisible.forEach((c,wi)=>{
-      const i=zS+wi;
-      const xc=toX(i), cv=c.combined_volume??0, yp=toVY(cv);
-
-      if(c.vol_buy_signal){
-        // horizontal dotted line at cv - 20% of |cv| (between signal level and zero)
-        const thresh=cv-Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(38,166,65,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(38,166,65,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar
-        ctx.save();
-        ctx.strokeStyle='rgba(38,166,65,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        _drawMarker(ctx,xc,yp-10,'▲','#26a641',11,'bold');
-        const lbl=c.date.slice(11,16)
-          +(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')
-          +' ₹'+c.close.toFixed(1);
-        _drawLabel(ctx,xc,yp-24,lbl,'#26a641','#0d1117');
-      }
-
-      if(c.vol_sell_signal){
-        // horizontal dotted line at cv + 20% of |cv| (between signal level and zero)
-        const thresh=cv+Math.abs(cv)*0.20;
-        const threshY=toVY(thresh);
-        if(threshY>=vT && threshY<=vT+vH){
-          ctx.save();
-          ctx.strokeStyle='rgba(248,81,73,0.8)'; ctx.lineWidth=1.0; ctx.setLineDash([4,4]);
-          ctx.beginPath(); ctx.moveTo(PL,threshY); ctx.lineTo(W-PR,threshY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(248,81,73,0.7)'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='left';
-          ctx.fillText((Math.abs(thresh)>=1000?(thresh/1000).toFixed(0)+'k':thresh.toFixed(0)),W-PR+2,threshY+3);
-          ctx.restore();
-        }
-        // vertical dotted line at this bar
-        ctx.save();
-        ctx.strokeStyle='rgba(248,81,73,0.30)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
-        ctx.beginPath(); ctx.moveTo(xc,vT); ctx.lineTo(xc,vT+vH); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
-        _drawMarker(ctx,xc,yp+10,'▼','#f85149',11,'bold');
-        const lbl=c.date.slice(11,16)
-          +(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')
-          +' ₹'+c.close.toFixed(1);
-        _drawLabel(ctx,xc,yp+24,lbl,'#f85149','#0d1117');
-      }
-    });
 
     // ════════════════════════════════════════════════════════
     // PANEL 3 — VWAP DEV %
@@ -2303,8 +2170,7 @@ const RPL = {
       {col:'#f85149', lw:1,   ls:[3,4], lbl:'ORB 100%'},
       {mrk:'▼', col:'#f85149', lbl:'G→R Flip'},
       {mrk:'▲', col:'#26a641', lbl:'R→G Flip'},
-      {mrk:'▲', col:'#00e5ff', lbl:'Vol Buy ≥+25%'},
-      {mrk:'▼', col:'#ff9f00', lbl:'Vol Sell ≤-25%'},
+
       {mrk:'◆', col:'#ff00ff', lbl:'Vol Surge'},
     ];
     const cols=2, rows=Math.ceil(items.length/cols);
