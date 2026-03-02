@@ -722,25 +722,27 @@ const CCHART = {
       ctx.fillText('📥 Load Data to begin',W/2,H/2); ctx.textAlign='left'; return;
     }
 
-    // ── layout ───────────────────────────────────────────────
+    // ── layout — 4 panels ──────────────────────────────────
     const PL=68,PR=62,PT=30,PB=28;
     const innerH=H-PT-PB;
-    const pH=Math.floor(innerH*0.60);
-    const vH=Math.floor(innerH*0.25);
-    const dH=innerH-pH-vH;
-    const pT=PT, vT=PT+pH+1, dT=vT+vH+1;
+    const pH=Math.floor(innerH*0.50);   // Price & VWAP
+    const vH=Math.floor(innerH*0.20);   // Excess Vol
+    const dH=Math.floor(innerH*0.13);   // VWAP Dev %
+    const rH=innerH-pH-vH-dH;           // Donchian ribbon
+    const pT=PT, vT=PT+pH+1, dT=vT+vH+1, rT=dT+dH+1;
     const chartW=W-PL-PR;
 
     // panel dividers
     ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
-    [[0,vT-1,W,vT-1],[0,dT-1,W,dT-1],[0,dT+dH+PB-1,W,dT+dH+PB-1]].forEach(([x1,y1,x2,y2])=>{
+    [[0,vT-1,W,vT-1],[0,dT-1,W,dT-1],[0,rT-1,W,rT-1],[0,rT+rH+PB-1,W,rT+rH+PB-1]].forEach(([x1,y1,x2,y2])=>{
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
     });
 
     ctx.fillStyle='#556070'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='left';
-    ctx.fillText('PRICE & VWAP',PL+4,pT+11);
-    ctx.fillText('EXCESS VOL',  PL+4,vT+11);
-    ctx.fillText('VWAP DEV %',  PL+4,dT+11);
+    ctx.fillText('PRICE & VWAP', PL+4, pT+11);
+    ctx.fillText('EXCESS VOL',   PL+4, vT+11);
+    ctx.fillText('VWAP DEV %',   PL+4, dT+11);
+    ctx.fillText('DONCHIAN',     PL+4, rT+11);
 
     // ── zoom window ──────────────────────────────────────────
     const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=Math.max(1,zE-zS);
@@ -891,6 +893,13 @@ const CCHART = {
 
     // no fill — lines only
 
+    // shade each bar green/red based on cv sign
+    win.forEach((c,wi)=>{
+      const cv=c.combined_volume??0;
+      ctx.fillStyle=cv>0?'rgba(38,166,65,0.10)':'rgba(248,81,73,0.10)';
+      ctx.fillRect(toX(zS+wi)-hw,vT,candleW||slotW*0.72,vH);
+    });
+
     // combined vol line — GREEN
     ctx.beginPath(); ctx.strokeStyle='#26a641'; ctx.lineWidth=1.2;
     cvV.forEach((v,wi)=>{const xp=toX(zS+wi),yp=toVY(v);wi===0?ctx.moveTo(xp,yp):ctx.lineTo(xp,yp);});
@@ -1003,8 +1012,58 @@ const CCHART = {
       }
     }
 
+
+    // ═══════════════════════════════════════════════════════
+    // PANEL 4 — DONCHIAN TREND RIBBON  (Pine Script port)
+    // 5 ribbons: offset 5 (bottom) → offset 9 (top)
+    // maintrend +1: sub=+1 → bright #00ff00, else faded
+    // maintrend -1: sub=-1 → bright #ff3030, else faded
+    // ═══════════════════════════════════════════════════════
+    {
+      const rbH=rH/5;                          // height of each of 5 ribbon rows
+      // ribbon order: offset 5 at bottom (row 4), offset 9 at top (row 0)
+      const offs=[9,8,7,6,5];
+
+      win.forEach((c,wi)=>{
+        const xc=toX(zS+wi), x0=xc-hw, bw=Math.max(1,candleW);
+        const mt=c.don_main??0;
+        offs.forEach((off,ri)=>{
+          const st=c['don_sub_'+off]??0;
+          let col;
+          if(mt===1)       col=st===1?'#00ff00':'rgba(0,200,0,0.22)';
+          else if(mt===-1) col=st===-1?'#ff3030':'rgba(255,48,48,0.22)';
+          else             col='rgba(100,100,100,0.18)';
+          ctx.fillStyle=col;
+          ctx.fillRect(x0, rT+ri*rbH, bw, rbH+0.5);
+        });
+      });
+
+      // flip markers at ribbon edges
+      win.forEach((c,wi)=>{
+        const xc=toX(zS+wi);
+        if(c.don_r2g){ _drawMarker(ctx,xc,rT+rH-7,'▲','#00ff00',9,'bold'); }
+        if(c.don_g2r){ _drawMarker(ctx,xc,rT+7,   '▼','#ff3030',9,'bold'); }
+      });
+
+      // current-state label on right axis
+      const lc=win[win.length-1];
+      if(lc){
+        const ag=lc.all_green,ar=lc.all_red,mt=lc.don_main??0;
+        const sc=ag?'#00ff00':ar?'#ff3030':'#8b949e';
+        const st=ag?'ALL GREEN':ar?'ALL RED':mt===1?'BULL':mt===-1?'BEAR':'FLAT';
+        ctx.fillStyle=sc; ctx.font='bold 8px Segoe UI,sans-serif'; ctx.textAlign='left';
+        ctx.fillText(st, W-PR+3, rT+rH/2+3);
+      }
+
+      // y-axis sub-trend labels
+      ctx.fillStyle='#445060'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='right';
+      ['d9','d8','d7','d6','d5'].forEach((lbl,ri)=>{
+        ctx.fillText(lbl, PL-3, rT+ri*rbH+rbH*0.65);
+      });
+    }
+
     // ── Time axis ────────────────────────────────────────────
-    this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,toX,zS,zE);
+    this._timeAxis(ctx,W,PL,PR,pT,rT+rH,total,toX,zS,zE);
   },
 
   // ── Legend ──────────────────────────────────────────────
@@ -1017,9 +1076,12 @@ const CCHART = {
       {col:'#f85149',lw:1,ls:[3,4],lbl:'ORB 100%'},
       {mrk:'▼',col:'#f85149',lbl:'G→R Flip'},
       {mrk:'▲',col:'#26a641',lbl:'R→G Flip'},
-      {mrk:'▲',col:'#00e5ff',lbl:'Vol Buy ≥+25%'},
-      {mrk:'▼',col:'#ff9f00',lbl:'Vol Sell ≤-25%'},
-      {mrk:'◆',col:'#ff00ff',lbl:'Vol Surge'},
+      {mrk:'▲',col:'#00e5ff',lbl:'Vol Buy (cv>0)'},
+      {mrk:'▼',col:'#ff9f00',lbl:'Vol Sell (cv<0)'},
+      {box:'#00ff00',lbl:'Don Bullish'},
+      {box:'#ff3030',lbl:'Don Bearish'},
+      {mrk:'▲',col:'#00ff00',lbl:'Don R→G'},
+      {mrk:'▼',col:'#ff3030',lbl:'Don G→R'},
     ];
     const cols=2,rows=Math.ceil(items.length/cols);
     const iW=110,iH=13,boxW=cols*iW+8,boxH=rows*iH+8;
@@ -1033,6 +1095,8 @@ const CCHART = {
         ctx.fillStyle=it.col; ctx.font='bold 9px Segoe UI,sans-serif';
         ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText(it.mrk,ix+5,iy+5);
+      } else if(it.box){
+        ctx.fillStyle=it.box; ctx.fillRect(ix,iy+1,10,8);
       } else {
         ctx.save();
         if(it.ls) ctx.setLineDash(it.ls);
@@ -1810,32 +1874,34 @@ const RPL = {
     ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,H);
 
     // ── layout constants ────────────────────────────────────
-    const PL=68, PR=62, PT=30, PB=28;   // PR wide for right-side ORB labels
+    const PL=68, PR=62, PT=30, PB=28;
     const innerH = H - PT - PB;
-    const pH = Math.floor(innerH*0.60);
-    const vH = Math.floor(innerH*0.25);
-    const dH = innerH - pH - vH;
-    const pT=PT, vT=PT+pH+1, dT=vT+vH+1;
+    const pH = Math.floor(innerH*0.50);   // Price & VWAP
+    const vH = Math.floor(innerH*0.20);   // Excess Vol
+    const dH = Math.floor(innerH*0.13);   // VWAP Dev %
+    const rH = innerH - pH - vH - dH;     // Donchian ribbon
+    const pT=PT, vT=PT+pH+1, dT=vT+vH+1, rT=dT+dH+1;
     const chartW=W-PL-PR;
 
     // ── panel border lines ───────────────────────────────────
     ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(0,vT-1); ctx.lineTo(W,vT-1); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,dT-1); ctx.lineTo(W,dT-1); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,dT+dH+PB-1); ctx.lineTo(W,dT+dH+PB-1); ctx.stroke();
+    [[0,vT-1,W,vT-1],[0,dT-1,W,dT-1],[0,rT-1,W,rT-1],[0,rT+rH+PB-1,W,rT+rH+PB-1]].forEach(([x1,y1,x2,y2])=>{
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    });
 
     // ── panel Y-axis labels ──────────────────────────────────
     ctx.fillStyle='#556070'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='left';
     ctx.fillText('PRICE & VWAP', PL+4, pT+11);
     ctx.fillText('EXCESS VOL',   PL+4, vT+11);
     ctx.fillText('VWAP DEV %',   PL+4, dT+11);
+    ctx.fillText('DONCHIAN',     PL+4, rT+11);
 
     // ── empty state ──────────────────────────────────────────
     if(!visible.length){
       ctx.fillStyle='#8b949e'; ctx.font='14px Segoe UI,sans-serif'; ctx.textAlign='center';
       ctx.fillText(total?('▶ Play — '+total+' candles ready'):'📥 Load Data to begin', W/2, H/2);
       ctx.textAlign='left';
-      if(total) this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,null,0,total);
+      if(total) this._timeAxis(ctx,W,PL,PR,pT,rT+rH,total,null,0,total);
       return;
     }
 
@@ -2152,10 +2218,61 @@ const RPL = {
     });
     ctx.stroke();
 
+
+    // ════════════════════════════════════════════════════════════
+    // PANEL 4 — DONCHIAN TREND RIBBON  (Pine Script port)
+    // 5 rows top→bottom: offset 9 (top) … offset 5 (bottom)
+    // maintrend +1: sub=+1 → bright #00ff00, faded otherwise
+    // maintrend −1: sub=−1 → bright #ff3030, faded otherwise
+    // ════════════════════════════════════════════════════════════
+    {
+      const rbH = rH / 5;
+      const offs = [9,8,7,6,5];   // row 0=top(offset9), row 4=bottom(offset5)
+
+      winVisible.forEach((c,wi)=>{
+        const i   = zS+wi;
+        const xc  = toX(i), x0=xc-hw, bw=Math.max(1,candleW);
+        const mt  = c.don_main??0;
+        offs.forEach((off,ri)=>{
+          const st = c['don_sub_'+off]??0;
+          let col;
+          if     (mt===1)  col = st===1  ? '#00ff00' : 'rgba(0,200,0,0.18)';
+          else if(mt===-1) col = st===-1 ? '#ff3030' : 'rgba(255,48,48,0.18)';
+          else             col = 'rgba(100,100,100,0.15)';
+          ctx.fillStyle=col;
+          ctx.fillRect(x0, rT+ri*rbH, bw, rbH+0.5);
+        });
+      });
+
+      // Flip markers at ribbon edges
+      winVisible.forEach((c,wi)=>{
+        const i=zS+wi, xc=toX(i);
+        if(c.don_r2g){ _drawMarker(ctx,xc,rT+rH-7,'▲','#00ff00',9,'bold'); }
+        if(c.don_g2r){ _drawMarker(ctx,xc,rT+7,   '▼','#ff3030',9,'bold'); }
+      });
+
+      // Right-axis state label
+      const lc = winVisible[winVisible.length-1];
+      if(lc){
+        const ag=lc.all_green, ar=lc.all_red, mt=lc.don_main??0;
+        const sc = ag?'#00ff00':ar?'#ff3030':'#8b949e';
+        const st = ag?'ALL GREEN':ar?'ALL RED':mt===1?'BULL':mt===-1?'BEAR':'FLAT';
+        ctx.fillStyle=sc; ctx.font='bold 8px Segoe UI,sans-serif'; ctx.textAlign='left';
+        ctx.fillText(st, W-PR+3, rT+rH/2+3);
+        ctx.textAlign='left';
+      }
+
+      // Left y-axis labels (d9 top → d5 bottom)
+      ctx.fillStyle='#445060'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='right';
+      ['d9','d8','d7','d6','d5'].forEach((lbl,ri)=>{
+        ctx.fillText(lbl, PL-3, rT+ri*rbH+rbH*0.65);
+      });
+    }
+
     // ════════════════════════════════════════════════════════
     // SHARED TIME AXIS — dotted verticals spanning all panels
     // ════════════════════════════════════════════════════════
-    this._timeAxis(ctx,W,PL,PR,pT,dT+dH,total,toX,zS,zE);
+    this._timeAxis(ctx,W,PL,PR,pT,rT+rH,total,toX,zS,zE);
 
     // ── Info bar ─────────────────────────────────────────────
     const b2=last.close>=last.open;
