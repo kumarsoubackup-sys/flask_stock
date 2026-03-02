@@ -206,28 +206,17 @@ def calculate_excess_combined_intraday_volume(df: pd.DataFrame, smooth_bars: int
     denom = df['smoothed_volume'].replace(0, np.nan).abs()
     df['percent_diff'] = ((df['combined_volume'] - df['smoothed_volume']) / denom) * 100.0
 
-    # ── crossover / crossunder detection ────────────────────────────────────
+    # ── Signal logic: combined_volume sign ──────────────────────────────────
+    # Buy  signal : combined_volume > 0 (buy pressure dominates)
+    # Sell signal : combined_volume < 0 (sell pressure dominates)
+    # Keep crossover detection for percent_diff context (used in labels)
     comb   = df['combined_volume'].values
     smooth = df['smoothed_volume'].values
     pct    = df['percent_diff'].values
-
     n = len(df)
-    vol_buy  = np.zeros(n, dtype=bool)
-    vol_sell = np.zeros(n, dtype=bool)
 
-    for i in range(1, n):
-        # crossover  : prev bar comb <= smooth, current bar comb > smooth
-        crossover  = (comb[i-1] <= smooth[i-1]) and (comb[i] > smooth[i])
-        # crossunder : prev bar comb >= smooth, current bar comb < smooth
-        crossunder = (comb[i-1] >= smooth[i-1]) and (comb[i] < smooth[i])
-
-        pd_val = pct[i]
-        pd_ok  = not np.isnan(pd_val)
-
-        # BUY  : crossover  AND percent_diff >= +25%
-        vol_buy[i]  = crossover  and pd_ok and pd_val >= 25.0
-        # SELL : crossunder AND percent_diff <= -25%
-        vol_sell[i] = crossunder and pd_ok and pd_val <= -25.0
+    vol_buy  = comb > 0
+    vol_sell = comb < 0
 
     df['vol_buy_signal']  = vol_buy
     df['vol_sell_signal'] = vol_sell
@@ -380,10 +369,6 @@ class ScreenerIndicator:
         all_red   = (main==-1) & (s5==-1) & (s6==-1) & (s7==-1)
         df["all_green"] = all_green
         df["all_red"]   = all_red
-
-        # Per-bar sub-trend columns (for ribbon rendering / replay data)
-        df["don_s8"] = s8
-        df["don_s9"] = s9
 
         # ── Flip signals (pure Donchian, matches Pine plotshape) ─────────────
         # greenToRed = allGreen[1] and allRed   (was all-green last bar, now all-red)
@@ -901,6 +886,12 @@ def get_replay_data(ticker):
                 "don_main":        int(row.get("don_main", 0)),
                 "all_green":       bool(row.get("all_green", False)),
                 "all_red":         bool(row.get("all_red", False)),
+                # Donchian sub-trends (offset keys 5-9 for ribbon rendering)
+                "don_sub_5":       int(row.get("don_sub_5", 0)),
+                "don_sub_6":       int(row.get("don_sub_6", 0)),
+                "don_sub_7":       int(row.get("don_sub_7", 0)),
+                "don_sub_8":       int(row.get("don_sub_8", 0)),
+                "don_sub_9":       int(row.get("don_sub_9", 0)),
                 "major_fall":      bool(row.get("major_fall",   False)),
                 "basic_rise":      bool(row.get("basic_rise",   False)),
                 "confirmed_rise":  bool(row.get("confirmed_rise", False)),
