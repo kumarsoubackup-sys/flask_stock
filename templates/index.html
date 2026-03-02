@@ -841,7 +841,7 @@ const CCHART = {
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
-      } else if(c.signal_r2g||c.don_r2g) { _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold'); }
+      } else if(c.signal_r2g) { _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold'); }
         else if(c.parabolic_rise){ _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold'); }
         else if(c.explosive_rise){ _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*1.6,''); }
         else if(c.confirmed_rise){ _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*1.4,''); }
@@ -851,7 +851,7 @@ const CCHART = {
       if(c.vol_sell_signal){
         _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
-      } else if(c.signal_g2r||c.don_g2r) { _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold'); }
+      } else if(c.signal_g2r) { _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold'); }
         else if(c.crash_risk) { _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold'); }
         else if(c.major_fall) { _drawMarker(ctx,xc,sellY,'▼','#ffa657',SIG*1.6,''); }
     });
@@ -1078,10 +1078,7 @@ const CCHART = {
       {mrk:'▲',col:'#26a641',lbl:'R→G Flip'},
       {mrk:'▲',col:'#00e5ff',lbl:'Vol Buy (cv>0)'},
       {mrk:'▼',col:'#ff9f00',lbl:'Vol Sell (cv<0)'},
-      {box:'#00ff00',lbl:'Don Bullish'},
-      {box:'#ff3030',lbl:'Don Bearish'},
-      {mrk:'▲',col:'#00ff00',lbl:'Don R→G'},
-      {mrk:'▼',col:'#ff3030',lbl:'Don G→R'},
+
     ];
     const cols=2,rows=Math.ceil(items.length/cols);
     const iW=110,iH=13,boxW=cols*iW+8,boxH=rows*iH+8;
@@ -1144,8 +1141,8 @@ const CCHART = {
     const sigs=[];
     if(c.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')+'</span>');
     if(c.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')+'</span>');
-    if(c.signal_r2g||c.don_r2g) sigs.push('<span style="color:#26a641">R→G</span>');
-    if(c.signal_g2r||c.don_g2r) sigs.push('<span style="color:#f85149">G→R</span>');
+    if(c.signal_r2g) sigs.push('<span style="color:#26a641">R→G</span>');
+    if(c.signal_g2r) sigs.push('<span style="color:#f85149">G→R</span>');
     document.getElementById('status').innerHTML=
       '<b style="color:#ffd700">'+c.date.slice(11,16)+'</b>  '+
       'O <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.open.toFixed(2)+'</b>  '+
@@ -2029,7 +2026,7 @@ const RPL = {
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
-      } else if(c.signal_r2g||c.don_r2g) {
+      } else if(c.signal_r2g) {
         _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold');
       } else if(c.parabolic_rise) {
         _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold');
@@ -2047,7 +2044,7 @@ const RPL = {
       if(c.vol_sell_signal){
         _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
-      } else if(c.signal_g2r||c.don_g2r) {
+      } else if(c.signal_g2r) {
         _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold');
       } else if(c.crash_risk) {
         _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold');
@@ -2279,8 +2276,8 @@ const RPL = {
     const sigs=[];
     if(last.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(last.percent_diff!=null?' +'+last.percent_diff.toFixed(0)+'%':'')+'</span>');
     if(last.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(last.percent_diff!=null?' '+last.percent_diff.toFixed(0)+'%':'')+'</span>');
-    if(last.signal_r2g||last.don_r2g) sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
-    if(last.signal_g2r||last.don_g2r) sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
+    if(last.signal_r2g) sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
+    if(last.signal_g2r) sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
     if(last.parabolic_rise)  sigs.push('<span style="color:#ffd700">Parabolic</span>');
     if(last.explosive_rise)  sigs.push('<span style="color:#00e5ff">Explosive</span>');
     if(last.confirmed_rise)  sigs.push('<span style="color:#3fb950">Confirmed</span>');
@@ -2371,8 +2368,8 @@ const RPL = {
     const sigs=[];
     if(c.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')+'</span>');
     if(c.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')+'</span>');
-    if(c.signal_r2g||c.don_r2g) sigs.push('<span style="color:#26a641">R→G</span>');
-    if(c.signal_g2r||c.don_g2r) sigs.push('<span style="color:#f85149">G→R</span>');
+    if(c.signal_r2g) sigs.push('<span style="color:#26a641">R→G</span>');
+    if(c.signal_g2r) sigs.push('<span style="color:#f85149">G→R</span>');
     document.getElementById('rpl-ohlcv').innerHTML=
       '<b style="color:#ffd700">'+c.date.slice(11,16)+'</b>  '+
       'O <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.open.toFixed(2)+'</b>  '+
