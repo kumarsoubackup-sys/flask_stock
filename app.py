@@ -206,17 +206,29 @@ def calculate_excess_combined_intraday_volume(df: pd.DataFrame, smooth_bars: int
     denom = df['smoothed_volume'].replace(0, np.nan).abs()
     df['percent_diff'] = ((df['combined_volume'] - df['smoothed_volume']) / denom) * 100.0
 
-    # ── Signal logic: combined_volume sign ──────────────────────────────────
-    # Buy  signal : combined_volume > 0 (buy pressure dominates)
-    # Sell signal : combined_volume < 0 (sell pressure dominates)
-    # Keep crossover detection for percent_diff context (used in labels)
+    # ── Signal logic ─────────────────────────────────────────────────────────
+    # Buy  : comb crosses ABOVE smooth  AND  comb > 0  AND  percent_diff >= +25%
+    # Sell : comb crosses BELOW smooth  AND  comb < 0  AND  percent_diff <= -25%
     comb   = df['combined_volume'].values
     smooth = df['smoothed_volume'].values
     pct    = df['percent_diff'].values
     n = len(df)
 
-    vol_buy  = comb > 0
-    vol_sell = comb < 0
+    # Crossover: bar i-1 was on one side, bar i is on the other
+    cross_above = np.zeros(n, bool)   # comb[i-1] <= smooth[i-1]  and  comb[i] > smooth[i]
+    cross_below = np.zeros(n, bool)   # comb[i-1] >= smooth[i-1]  and  comb[i] < smooth[i]
+    for i in range(1, n):
+        c0, s0 = comb[i-1], smooth[i-1]
+        c1, s1 = comb[i],   smooth[i]
+        if np.isnan(s0) or np.isnan(s1): continue
+        cross_above[i] = (c0 <= s0) and (c1 > s1)
+        cross_below[i] = (c0 >= s0) and (c1 < s1)
+
+    pct_ok_buy  = np.where(np.isnan(pct), False, pct >= 25.0)
+    pct_ok_sell = np.where(np.isnan(pct), False, pct <= -25.0)
+
+    vol_buy  = cross_above & (comb > 0) & pct_ok_buy
+    vol_sell = cross_below & (comb < 0) & pct_ok_sell
 
     df['vol_buy_signal']  = vol_buy
     df['vol_sell_signal'] = vol_sell
@@ -495,8 +507,8 @@ class ScreenerIndicator:
             "parabolic_rise":      bool(last.get("parabolic_rise", False)),
             "escape":              bool(last.get("escape", False)),
             "crash_risk":          bool(last.get("crash_risk", False)),
-            "signal_green_to_red": bool(last.get("signal_green_to_red", False)),
-            "signal_red_to_green": bool(last.get("signal_red_to_green", False)),
+            "vol_buy_signal":       bool(last.get("vol_buy_signal",  False)),
+            "vol_sell_signal":      bool(last.get("vol_sell_signal", False)),
             "don_g2r":             bool(last.get("don_g2r", False)),
             "don_r2g":             bool(last.get("don_r2g", False)),
             # Volume crossover signals
@@ -588,8 +600,8 @@ def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOO
             ax_price.axhline(val, color=col, lw=1.0, linestyle=":", alpha=0.85, zorder=4)
             ax_price.text(xs[-1]+0.4, val, f" {lbl}\n {val:.1f}", color=col, fontsize=7, va="center", zorder=6)
 
-    g2r   = df["signal_green_to_red"].values.astype(bool) | df["don_g2r"].values.astype(bool)
-    r2g   = df["signal_red_to_green"].values.astype(bool) | df["don_r2g"].values.astype(bool)
+    g2r   = df["vol_sell_signal"].values.astype(bool)
+    r2g   = df["vol_buy_signal"].values.astype(bool)
     mfall = df["major_fall"].values.astype(bool)
 
     if g2r.any():
@@ -879,8 +891,8 @@ def get_replay_data(ticker):
                 "combined_volume": _fv(row.get("combined_volume")),
                 "smoothed_volume": _fv(row.get("smoothed_volume")),
                 # signal markers
-                "signal_r2g":      bool(row.get("signal_red_to_green", False)),
-                "signal_g2r":      bool(row.get("signal_green_to_red", False)),
+                "vol_buy_signal":  bool(row.get("vol_buy_signal",  False)),
+                "vol_sell_signal": bool(row.get("vol_sell_signal", False)),
                 "don_g2r":         bool(row.get("don_g2r", False)),
                 "don_r2g":         bool(row.get("don_r2g", False)),
                 "don_main":        int(row.get("don_main", 0)),
@@ -1035,8 +1047,7 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
 
         # ── Buy score (0-8) ──────────────────────────────────────────────────
         buy_score = sum([
-            bool(s.get("signal_red_to_green")),
-            bool(s.get("don_r2g")),
+            bool(s.get("vol_buy_signal")),
             bool(s.get("confirmed_rise")) or bool(s.get("explosive_rise")),
             bool(s.get("parabolic_rise")),
             bool(s.get("basic_rise")),
@@ -1048,8 +1059,7 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
 
         # ── Sell score (0-6) ─────────────────────────────────────────────────
         sell_score = sum([
-            bool(s.get("signal_green_to_red")),
-            bool(s.get("don_g2r")),
+            bool(s.get("vol_sell_signal")),
             bool(s.get("major_fall")),
             bool(s.get("all_red")),
             int(s.get("don_main", 0)) == -1,
@@ -1058,9 +1068,9 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
         ])
 
         # ── Signal timestamps (last bar where signal fired) ──────────────────
-        buy_signal_cols  = ["signal_red_to_green", "don_r2g", "explosive_rise", "confirmed_rise",
+        buy_signal_cols  = ["vol_buy_signal", "explosive_rise", "confirmed_rise",
                             "parabolic_rise", "basic_rise", "escape"]
-        sell_signal_cols = ["signal_green_to_red", "don_g2r", "major_fall", "crash_risk"]
+        sell_signal_cols = ["vol_sell_signal", "major_fall", "crash_risk"]
         buy_signal_time  = _first_signal_time(result, buy_signal_cols)
         sell_signal_time = _first_signal_time(result, sell_signal_cols)
 
@@ -1085,8 +1095,8 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
             "major_fall":      s.get("major_fall"),
             "crash_risk":      s.get("crash_risk"),
             "escape":          s.get("escape"),
-            "signal_r2g":      s.get("signal_red_to_green"),
-            "signal_g2r":      s.get("signal_green_to_red"),
+            "vol_buy_signal":  s.get("vol_buy_signal"),
+            "vol_sell_signal": s.get("vol_sell_signal"),
             "don_r2g":         s.get("don_r2g"),
             "don_g2r":         s.get("don_g2r"),
             "buy_score":       buy_score,
