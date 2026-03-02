@@ -326,27 +326,74 @@ class ScreenerIndicator:
         df["vwap_dev"] = dev; df["vwap_dev_line"] = vwap_arr - dev
 
     def _calc_donchian(self, df):
+        """
+        Donchian Trend Ribbon — direct Python port of Pine Script v5 indicator.
+
+        dchannel(len): trend = +1 if close > highest(high, len)[1]
+                               -1 if close < lowest (low,  len)[1]
+                               else carry previous trend
+        dlen  = DONCHIAN_LEN (default 20)
+        Subtend lengths used: dlen-5 … dlen-9  (Pine plots at offsets 5-9)
+        allGreen = maintrend==1 & subTrend(dlen-5)==1 & subTrend(dlen-6)==1 & subTrend(dlen-7)==1
+        allRed   = maintrend==-1 & subTrend(dlen-5)==-1 & subTrend(dlen-6)==-1 & subTrend(dlen-7)==-1
+        don_g2r  = allGreen[1] & allRed    (Green→Red flip)
+        don_r2g  = allRed[1]   & allGreen  (Red→Green flip)
+        """
         high = df["high"].values; low = df["low"].values
-        close = df["close"].values; sess = df["in_session"].values; n = len(df)
+        close = df["close"].values; n = len(df)
+
         def _don(length):
+            """
+            Pine: highest/lowest use a rolling window of `length` bars.
+            hh[1] means highest of previous `length` bars (not including current),
+            which matches high[i-length:i] in zero-indexed Python.
+            """
             trend = np.zeros(n, dtype=int)
             for i in range(length, n):
-                if not sess[i]: trend[i] = trend[i-1]; continue
-                hh = np.max(high[i-length:i]); ll = np.min(low[i-length:i])
+                hh = np.max(high[i-length:i])
+                ll = np.min(low [i-length:i])
                 if   close[i] > hh: trend[i] = 1
                 elif close[i] < ll: trend[i] = -1
                 else:               trend[i] = trend[i-1]
             return trend
-        main = _don(DONCHIAN_LEN); df["don_main"] = main
+
+        # Main Donchian trend (dlen = DONCHIAN_LEN)
+        main = _don(DONCHIAN_LEN)
+        df["don_main"] = main
+
+        # Sub-trends at dlen-5 through dlen-9  (Pine plots 5 ribbons)
         sub = {}
-        for offset in range(10):
+        for offset in range(5, 10):          # offsets 5,6,7,8,9
             length = DONCHIAN_LEN - offset
             if length >= 1:
-                t = _don(length); df[f"don_sub_{length}"] = t; sub[length] = t
-        s30 = sub.get(DONCHIAN_LEN-5, np.zeros(n)); s35 = sub.get(DONCHIAN_LEN-6, np.zeros(n))
-        s40 = sub.get(DONCHIAN_LEN-7, np.zeros(n))
-        df["all_green"] = (main==1)  & (s30==1)  & (s35==1)  & (s40==1)
-        df["all_red"]   = (main==-1) & (s30==-1) & (s35==-1) & (s40==-1)
+                sub[offset] = _don(length)
+                df[f"don_sub_{offset}"] = sub[offset]
+
+        s5 = sub.get(5, np.zeros(n, int))   # dlen-5
+        s6 = sub.get(6, np.zeros(n, int))   # dlen-6
+        s7 = sub.get(7, np.zeros(n, int))   # dlen-7
+        s8 = sub.get(8, np.zeros(n, int))   # dlen-8
+        s9 = sub.get(9, np.zeros(n, int))   # dlen-9
+
+        # allGreen / allRed — Pine uses first 3 subtends (offsets 5,6,7)
+        all_green = (main==1)  & (s5==1)  & (s6==1)  & (s7==1)
+        all_red   = (main==-1) & (s5==-1) & (s6==-1) & (s7==-1)
+        df["all_green"] = all_green
+        df["all_red"]   = all_red
+
+        # Per-bar sub-trend columns (for ribbon rendering / replay data)
+        df["don_s8"] = s8
+        df["don_s9"] = s9
+
+        # ── Flip signals (pure Donchian, matches Pine plotshape) ─────────────
+        # greenToRed = allGreen[1] and allRed   (was all-green last bar, now all-red)
+        # redToGreen = allRed[1]   and allGreen  (was all-red last bar, now all-green)
+        ag = all_green.astype(bool); ar = all_red.astype(bool)
+        don_g2r = np.zeros(n, bool); don_r2g = np.zeros(n, bool)
+        don_g2r[1:] = ag[:-1] & ar[1:]
+        don_r2g[1:] = ar[:-1] & ag[1:]
+        df["don_g2r"] = don_g2r   # Green → Red flip
+        df["don_r2g"] = don_r2g   # Red → Green flip
 
     def _calc_gravity_speed(self, df):
         n = len(df); close = df["close"].values; sess = df["in_session"].values
@@ -465,6 +512,8 @@ class ScreenerIndicator:
             "crash_risk":          bool(last.get("crash_risk", False)),
             "signal_green_to_red": bool(last.get("signal_green_to_red", False)),
             "signal_red_to_green": bool(last.get("signal_red_to_green", False)),
+            "don_g2r":             bool(last.get("don_g2r", False)),
+            "don_r2g":             bool(last.get("don_r2g", False)),
             # Volume crossover signals
             "percent_diff":        _f("percent_diff"),
             "vol_buy_signal":      bool(last.get("vol_buy_signal",  False)),
@@ -554,8 +603,8 @@ def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOO
             ax_price.axhline(val, color=col, lw=1.0, linestyle=":", alpha=0.85, zorder=4)
             ax_price.text(xs[-1]+0.4, val, f" {lbl}\n {val:.1f}", color=col, fontsize=7, va="center", zorder=6)
 
-    g2r   = df["signal_green_to_red"].values.astype(bool)
-    r2g   = df["signal_red_to_green"].values.astype(bool)
+    g2r   = df["signal_green_to_red"].values.astype(bool) | df["don_g2r"].values.astype(bool)
+    r2g   = df["signal_red_to_green"].values.astype(bool) | df["don_r2g"].values.astype(bool)
     mfall = df["major_fall"].values.astype(bool)
 
     if g2r.any():
@@ -847,6 +896,11 @@ def get_replay_data(ticker):
                 # signal markers
                 "signal_r2g":      bool(row.get("signal_red_to_green", False)),
                 "signal_g2r":      bool(row.get("signal_green_to_red", False)),
+                "don_g2r":         bool(row.get("don_g2r", False)),
+                "don_r2g":         bool(row.get("don_r2g", False)),
+                "don_main":        int(row.get("don_main", 0)),
+                "all_green":       bool(row.get("all_green", False)),
+                "all_red":         bool(row.get("all_red", False)),
                 "major_fall":      bool(row.get("major_fall",   False)),
                 "basic_rise":      bool(row.get("basic_rise",   False)),
                 "confirmed_rise":  bool(row.get("confirmed_rise", False)),
@@ -991,6 +1045,7 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
         # ── Buy score (0-8) ──────────────────────────────────────────────────
         buy_score = sum([
             bool(s.get("signal_red_to_green")),
+            bool(s.get("don_r2g")),
             bool(s.get("confirmed_rise")) or bool(s.get("explosive_rise")),
             bool(s.get("parabolic_rise")),
             bool(s.get("basic_rise")),
@@ -1003,6 +1058,7 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
         # ── Sell score (0-6) ─────────────────────────────────────────────────
         sell_score = sum([
             bool(s.get("signal_green_to_red")),
+            bool(s.get("don_g2r")),
             bool(s.get("major_fall")),
             bool(s.get("all_red")),
             int(s.get("don_main", 0)) == -1,
@@ -1011,9 +1067,9 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
         ])
 
         # ── Signal timestamps (last bar where signal fired) ──────────────────
-        buy_signal_cols  = ["signal_red_to_green", "explosive_rise", "confirmed_rise",
+        buy_signal_cols  = ["signal_red_to_green", "don_r2g", "explosive_rise", "confirmed_rise",
                             "parabolic_rise", "basic_rise", "escape"]
-        sell_signal_cols = ["signal_green_to_red", "major_fall", "crash_risk"]
+        sell_signal_cols = ["signal_green_to_red", "don_g2r", "major_fall", "crash_risk"]
         buy_signal_time  = _first_signal_time(result, buy_signal_cols)
         sell_signal_time = _first_signal_time(result, sell_signal_cols)
 
@@ -1040,6 +1096,8 @@ def _score_symbol(ticker: str, interval: str = "1m", smooth_bars: int = EXCESS_S
             "escape":          s.get("escape"),
             "signal_r2g":      s.get("signal_red_to_green"),
             "signal_g2r":      s.get("signal_green_to_red"),
+            "don_r2g":         s.get("don_r2g"),
+            "don_g2r":         s.get("don_g2r"),
             "buy_score":       buy_score,
             "sell_score":      sell_score,
             "buy_signal_time": buy_signal_time,
