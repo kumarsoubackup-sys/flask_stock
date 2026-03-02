@@ -607,8 +607,8 @@ function populateSidebar(s){
   $('m-prise').innerHTML=badge(s.parabolic_rise,'YES ⚡','NO','badge-gold','badge-gray');
   $('m-escape').innerHTML=badge(s.escape,'YES ↑','NO','badge-purple','badge-gray');
   $('m-crash').innerHTML=badge(s.crash_risk,'RISK ⚠','NO','badge-red','badge-gray');
-  $('m-g2r').innerHTML=badge(s.signal_green_to_red,'FLIP ↓','NO','badge-red','badge-gray');
-  $('m-r2g').innerHTML=badge(s.signal_red_to_green,'FLIP ↑','NO','badge-green','badge-gray');
+  $('m-g2r').innerHTML=badge(s.signal_green_to_red||s.don_g2r,'FLIP ↓','NO','badge-red','badge-gray');
+  $('m-r2g').innerHTML=badge(s.signal_red_to_green||s.don_r2g,'FLIP ↑','NO','badge-green','badge-gray');
   $('m-datetime').textContent='Updated: '+(s.datetime||'—');
 }
 
@@ -839,7 +839,7 @@ const CCHART = {
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
-      } else if(c.signal_r2g)    { _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold'); }
+      } else if(c.signal_r2g||c.don_r2g) { _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold'); }
         else if(c.parabolic_rise){ _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold'); }
         else if(c.explosive_rise){ _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*1.6,''); }
         else if(c.confirmed_rise){ _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*1.4,''); }
@@ -849,7 +849,7 @@ const CCHART = {
       if(c.vol_sell_signal){
         _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
-      } else if(c.signal_g2r) { _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold'); }
+      } else if(c.signal_g2r||c.don_g2r) { _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold'); }
         else if(c.crash_risk) { _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold'); }
         else if(c.major_fall) { _drawMarker(ctx,xc,sellY,'▼','#ffa657',SIG*1.6,''); }
     });
@@ -1080,8 +1080,8 @@ const CCHART = {
     const sigs=[];
     if(c.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')+'</span>');
     if(c.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')+'</span>');
-    if(c.signal_r2g)      sigs.push('<span style="color:#26a641">R→G</span>');
-    if(c.signal_g2r)      sigs.push('<span style="color:#f85149">G→R</span>');
+    if(c.signal_r2g||c.don_r2g) sigs.push('<span style="color:#26a641">R→G</span>');
+    if(c.signal_g2r||c.don_g2r) sigs.push('<span style="color:#f85149">G→R</span>');
     document.getElementById('status').innerHTML=
       '<b style="color:#ffd700">'+c.date.slice(11,16)+'</b>  '+
       'O <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.open.toFixed(2)+'</b>  '+
@@ -1605,6 +1605,7 @@ function sigTags(r,type){
   const t=[];
   if(type==='buy'){
     if(r.signal_r2g)     t.push('<span class="badge badge-green">R→G</span>');
+    if(r.don_r2g)        t.push('<span class="badge badge-green">Don R→G</span>');
     if(r.explosive_rise) t.push('<span class="badge badge-blue">Explosive</span>');
     if(r.confirmed_rise) t.push('<span class="badge badge-green">Confirmed</span>');
     if(r.parabolic_rise) t.push('<span class="badge badge-gold">Parabolic</span>');
@@ -1612,6 +1613,7 @@ function sigTags(r,type){
     if(r.escape)         t.push('<span class="badge badge-purple">Escape</span>');
   } else {
     if(r.signal_g2r)  t.push('<span class="badge badge-red">G→R</span>');
+    if(r.don_g2r)     t.push('<span class="badge badge-red">Don G→R</span>');
     if(r.major_fall)  t.push('<span class="badge badge-red">MajFall</span>');
     if(r.crash_risk)  t.push('<span class="badge badge-red">Crash</span>');
     if(r.all_red)     t.push('<span class="badge badge-red">AllRed</span>');
@@ -1961,7 +1963,7 @@ const RPL = {
       if(c.vol_buy_signal){
         _drawMarker(ctx,xc,buyY,'▲','#00e5ff',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,buyY+SIG+4,'+'+c.percent_diff.toFixed(0)+'%','#00e5ff','#0d1117');
-      } else if(c.signal_r2g) {
+      } else if(c.signal_r2g||c.don_r2g) {
         _drawMarker(ctx,xc,buyY,'▲','#26a641',SIG*2,'bold');
       } else if(c.parabolic_rise) {
         _drawMarker(ctx,xc,buyY,'▲','#ffd700',SIG*1.8,'bold');
@@ -1979,7 +1981,7 @@ const RPL = {
       if(c.vol_sell_signal){
         _drawMarker(ctx,xc,sellY,'▼','#ff9f00',SIG*2.2,'bold');
         if(c.percent_diff!=null) _drawLabel(ctx,xc,sellY-SIG-4,c.percent_diff.toFixed(0)+'%','#ff9f00','#0d1117');
-      } else if(c.signal_g2r) {
+      } else if(c.signal_g2r||c.don_g2r) {
         _drawMarker(ctx,xc,sellY,'▼','#f85149',SIG*2,'bold');
       } else if(c.crash_risk) {
         _drawMarker(ctx,xc,sellY,'▼','#ff7b72',SIG*1.8,'bold');
@@ -2160,8 +2162,8 @@ const RPL = {
     const sigs=[];
     if(last.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(last.percent_diff!=null?' +'+last.percent_diff.toFixed(0)+'%':'')+'</span>');
     if(last.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(last.percent_diff!=null?' '+last.percent_diff.toFixed(0)+'%':'')+'</span>');
-    if(last.signal_r2g)      sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
-    if(last.signal_g2r)      sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
+    if(last.signal_r2g||last.don_r2g) sigs.push('<span style="color:#26a641;font-weight:700">R→G</span>');
+    if(last.signal_g2r||last.don_g2r) sigs.push('<span style="color:#f85149;font-weight:700">G→R</span>');
     if(last.parabolic_rise)  sigs.push('<span style="color:#ffd700">Parabolic</span>');
     if(last.explosive_rise)  sigs.push('<span style="color:#00e5ff">Explosive</span>');
     if(last.confirmed_rise)  sigs.push('<span style="color:#3fb950">Confirmed</span>');
@@ -2252,8 +2254,8 @@ const RPL = {
     const sigs=[];
     if(c.vol_buy_signal)  sigs.push('<span style="color:#00e5ff;font-weight:700">VolBUY'+(c.percent_diff!=null?' +'+c.percent_diff.toFixed(0)+'%':'')+'</span>');
     if(c.vol_sell_signal) sigs.push('<span style="color:#ff9f00;font-weight:700">VolSELL'+(c.percent_diff!=null?' '+c.percent_diff.toFixed(0)+'%':'')+'</span>');
-    if(c.signal_r2g)      sigs.push('<span style="color:#26a641">R→G</span>');
-    if(c.signal_g2r)      sigs.push('<span style="color:#f85149">G→R</span>');
+    if(c.signal_r2g||c.don_r2g) sigs.push('<span style="color:#26a641">R→G</span>');
+    if(c.signal_g2r||c.don_g2r) sigs.push('<span style="color:#f85149">G→R</span>');
     document.getElementById('rpl-ohlcv').innerHTML=
       '<b style="color:#ffd700">'+c.date.slice(11,16)+'</b>  '+
       'O <b style="color:'+(b?'#26a641':'#f85149')+'">'+c.open.toFixed(2)+'</b>  '+
