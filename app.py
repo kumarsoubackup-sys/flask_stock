@@ -544,15 +544,135 @@ def apply_screen(df: pd.DataFrame, min_volume: int = 6_000_000) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════
+# ATTENTION MECHANISM
+# ═══════════════════════════════════════════════════════════
+
+def attention_head(Q: float,
+                   Ks: np.ndarray,
+                   Vs: np.ndarray,
+                   dk: float) -> float:
+    """
+    Numerically stable softmax-weighted attention.
+
+    Parameters
+    ----------
+    Q  : query scalar (current bar feature)
+    Ks : key array   (past `len` bars of same feature)
+    Vs : value array (past `len` bars of log-return)
+    dk : scaling factor
+
+    Returns
+    -------
+    Attention-weighted sum of values.
+    """
+    scores = (Q * Ks) / np.sqrt(dk)
+    scores -= scores.max()                      # numerical stability
+    weights = np.exp(scores)
+    w_total = weights.sum()
+    if w_total == 0:
+        return 0.0
+    return float((weights * Vs).sum() / w_total)
+
+
+def multi_head_attention(df: pd.DataFrame,
+                         attn_len: int = 60,
+                         dk: float = 8.0) -> pd.Series:
+    """
+    Run 3-head attention over every bar and return the merged attention output.
+
+    Head 1 – price momentum  (q_ret  keys)
+    Head 2 – volume          (q_vol  keys)
+    Head 3 – hi-lo range     (q_hl   keys)
+    """
+    n = len(df)
+    attn_out = np.full(n, np.nan)
+
+    q_ret_arr = df["q_ret"].to_numpy()
+    q_vol_arr = df["q_vol"].to_numpy()
+    q_hl_arr  = df["q_hl"].to_numpy()
+    v_arr     = df["ret"].to_numpy()
+    session   = df["in_session"].to_numpy()
+
+    for i in range(attn_len, n):
+        if not session[i]:
+            continue
+
+        # Slice lookback window (oldest ... newest-1)
+        sl = slice(i - attn_len, i)
+        Ks_ret = q_ret_arr[sl]
+        Ks_vol = q_vol_arr[sl]
+        Ks_hl  = q_hl_arr[sl]
+        Vs     = v_arr[sl]
+
+        # Skip if any NaN in window
+        if np.isnan(Ks_ret).any() or np.isnan(Vs).any():
+            continue
+
+        Q_ret = q_ret_arr[i]
+        Q_vol = q_vol_arr[i]
+        Q_hl  = q_hl_arr[i]
+
+        if np.isnan(Q_ret) or np.isnan(Q_vol) or np.isnan(Q_hl):
+            continue
+
+        h1 = attention_head(Q_ret, Ks_ret, Vs, dk)
+        h2 = attention_head(Q_vol, Ks_vol, Vs, dk)
+        h3 = attention_head(Q_hl,  Ks_hl,  Vs, dk)
+
+        attn_out[i] = (h1 + h2 + h3) / 3.0
+
+    return pd.Series(attn_out, index=df.index, name="attn_out")
+
+
+def _calc_attention_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute query/key features and attention output for df."""
+    df = df.copy()
+    close  = df["close"].values
+    volume = df["volume"].values
+    high   = df["high"].values
+    low    = df["low"].values
+    n = len(df)
+
+    # log-return (query for head 1, also used as values V)
+    ret = np.concatenate(([0.0], np.log(close[1:] / np.where(close[:-1] > 0, close[:-1], np.nan))))
+    ret = np.nan_to_num(ret, nan=0.0)
+
+    # normalised volume (z-score over rolling 60 bars)
+    vol_mean = _sma(volume.astype(float), 60)
+    vol_std  = _rolling_std(volume.astype(float), 60)
+    q_vol = np.where(vol_std > 0, (volume - vol_mean) / vol_std, 0.0)
+
+    # hi-lo range normalised by close
+    hl_pct = (high - low) / np.where(close > 0, close, np.nan)
+    hl_pct = np.nan_to_num(hl_pct, nan=0.0)
+    hl_mean = _sma(hl_pct, 60)
+    hl_std  = _rolling_std(hl_pct, 60)
+    q_hl = np.where(hl_std > 0, (hl_pct - hl_mean) / hl_std, 0.0)
+
+    df["ret"]   = ret
+    df["q_ret"] = ret        # query = current log-return
+    df["q_vol"] = q_vol
+    df["q_hl"]  = q_hl
+
+    df["attn_out"] = multi_head_attention(df, attn_len=60, dk=8.0).values
+    return df
+
+
+# ═══════════════════════════════════════════════════════════
 # CHART GENERATOR  (3-panel: Price | Excess Vol | VWAP Dev)
 # ═══════════════════════════════════════════════════════════
 
 def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOOTH_BARS) -> io.BytesIO:
-    """Build the 3-panel chart and return it as a PNG BytesIO buffer."""
+    """Build the 4-panel chart (Price | Excess Vol | VWAP Dev | Attention) and return as PNG BytesIO."""
+
+    # Compute attention features if not already present
+    if "attn_out" not in df.columns:
+        df = _calc_attention_features(df)
 
     comb_vals     = df["combined_volume"].values
     smooth_vals   = df["smoothed_volume"].values
     vwap_dev      = df["vwap_dev"].values   # positive = price above VWAP, negative = below
+    attn_vals     = df["attn_out"].values   # multi-head attention output
 
     # ── Signal logic ──────────────────────────────────────────────────────────
     # Signals come from calculate_excess_combined_intraday_volume:
@@ -565,14 +685,15 @@ def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOO
 
     xs = np.arange(len(df))
 
-    fig = plt.figure(figsize=(20, 12), facecolor=DARK_BG)
-    gs  = GridSpec(3, 1, figure=fig, height_ratios=[6, 2.0, 1.8],
-                   hspace=0.06, left=0.06, right=0.97, top=0.93, bottom=0.08)
+    fig = plt.figure(figsize=(20, 14), facecolor=DARK_BG)
+    gs  = GridSpec(4, 1, figure=fig, height_ratios=[6, 2.0, 1.8, 1.8],
+                   hspace=0.06, left=0.06, right=0.97, top=0.93, bottom=0.07)
     ax_price  = fig.add_subplot(gs[0])
     ax_excess = fig.add_subplot(gs[1], sharex=ax_price)
     ax_dev    = fig.add_subplot(gs[2], sharex=ax_price)
+    ax_attn   = fig.add_subplot(gs[3], sharex=ax_price)
 
-    for ax in (ax_price, ax_excess, ax_dev):
+    for ax in (ax_price, ax_excess, ax_dev, ax_attn):
         ax.set_facecolor(DARK_BG)
         ax.tick_params(colors=TEXT_COL, labelsize=8)
         ax.yaxis.label.set_color(TEXT_COL)
@@ -694,7 +815,7 @@ def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOO
     for kt, (label, kc, ls) in KEY_TIMES.items():
         idxs = [i for i, ts in enumerate(df.index) if ts.time() == kt]
         if idxs:
-            for ax in (ax_price, ax_excess, ax_dev):
+            for ax in (ax_price, ax_excess, ax_dev, ax_attn):
                 ax.axvline(idxs[0], color=kc, lw=0.9, linestyle=ls, alpha=0.8, zorder=1)
 
     # ── Panel 2: VWAP Dev % ──
@@ -751,18 +872,46 @@ def generate_chart(df: pd.DataFrame, ticker: str, smooth_bars: int = EXCESS_SMOO
     ax_excess.legend(loc="upper left", fontsize=6.5, facecolor="#161b22",
                      edgecolor=GRID_COL, labelcolor=TEXT_COL, ncol=4)
 
+    # ── Panel 4: Multi-Head Attention Output ──
+    ATTN_COL   = "#d2a8ff"   # purple
+    ATTN_POS   = "#00e5ff"   # cyan for positive
+    ATTN_NEG   = "#ff7b72"   # red-orange for negative
+    valid_attn = np.where(np.isfinite(attn_vals), attn_vals, np.nan)
+
+    ax_attn.fill_between(xs, valid_attn, 0,
+                         where=(valid_attn >= 0),
+                         color=ATTN_POS, alpha=0.25, zorder=2)
+    ax_attn.fill_between(xs, valid_attn, 0,
+                         where=(valid_attn < 0),
+                         color=ATTN_NEG, alpha=0.25, zorder=2)
+    ax_attn.plot(xs, valid_attn, color=ATTN_COL, lw=1.2, zorder=3, label="Attention (3-head avg)")
+    ax_attn.axhline(0, color=TEXT_COL, lw=0.8)
+
+    # Draw buy/sell signals on attention panel
+    if buy_signals.any():
+        ax_attn.scatter(xs[buy_signals], valid_attn[buy_signals],
+                        marker="^", color=UP_COL, s=70, zorder=6, label="Vol Buy")
+    if sell_signals.any():
+        ax_attn.scatter(xs[sell_signals], valid_attn[sell_signals],
+                        marker="v", color=DN_COL, s=70, zorder=6, label="Vol Sell")
+
+    ax_attn.set_ylabel("Attention", color=TEXT_COL, fontsize=8)
+    ax_attn.legend(loc="upper left", fontsize=6.5, facecolor="#161b22",
+                   edgecolor=GRID_COL, labelcolor=TEXT_COL, ncol=3)
+
     # ── Axes / Ticks ──
     ax_price.set_xlim(-0.5, len(xs) - 0.5 + 4)
     ax_price.set_ylabel("Price (INR)", color=TEXT_COL, fontsize=9)
     plt.setp(ax_price.get_xticklabels(),  visible=False)
     plt.setp(ax_excess.get_xticklabels(), visible=False)
+    plt.setp(ax_dev.get_xticklabels(),    visible=False)
 
     tick_pos = np.linspace(0, len(xs)-1, min(12, len(xs)), dtype=int)
-    ax_dev.set_xticks(tick_pos)
-    ax_dev.set_xticklabels(
+    ax_attn.set_xticks(tick_pos)
+    ax_attn.set_xticklabels(
         [df.index[i].strftime("%H:%M") for i in tick_pos],
         color=TEXT_COL, fontsize=8, rotation=45, ha="right")
-    ax_dev.set_xlabel("Time (IST)", color=TEXT_COL, fontsize=9)
+    ax_attn.set_xlabel("Time (IST)", color=TEXT_COL, fontsize=9)
 
     legend_handles = [
         mlines.Line2D([], [], color=VWAP_COL,   lw=1.6,          label="VWAP"),
@@ -854,6 +1003,7 @@ def get_replay_data(ticker):
         ind    = ScreenerIndicator(raw_df)
         result = ind.run()
         result = calculate_excess_combined_intraday_volume(result, smooth_bars=_get_smooth_bars())
+        result = _calc_attention_features(result)   # multi-head attention
 
         # Filter to last session only (09:15–15:30 IST)
         last_date = result.index[-1].date()
@@ -915,6 +1065,8 @@ def get_replay_data(ticker):
                 "percent_diff":    _fv(row.get("percent_diff")),
                 "vol_buy_signal":  bool(row.get("vol_buy_signal",  False)),
                 "vol_sell_signal": bool(row.get("vol_sell_signal", False)),
+                # multi-head attention
+                "attn_out":        _fv(row.get("attn_out")),
             })
 
         return jsonify({"ticker": ticker.upper(), "bars": len(bars), "data": bars})
@@ -964,6 +1116,7 @@ def get_chart(ticker):
         result = calculate_excess_combined_intraday_volume(result, smooth_bars=_sb)
         min_vol = int(request.args.get('min_vol', 6_000_000))
         result = apply_screen(result, min_volume=min_vol)   # needs full history for 500-bar SMA
+        result = _calc_attention_features(result)           # multi-head attention
 
         # Filter to last session only (9:15 – 15:30 IST)
         last_date = result.index[-1].date()
