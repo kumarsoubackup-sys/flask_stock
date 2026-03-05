@@ -343,6 +343,21 @@
     <div id="chart-zoom-hint" style="display:none;position:absolute;bottom:8px;right:10px;font-size:10px;color:#556070;pointer-events:none;background:rgba(13,17,23,0.75);padding:3px 8px;border-radius:4px;">
       scroll=zoom · drag=pan · dbl-click=reset
     </div>
+    <!-- Zoom In / Out / Reset buttons — top-right corner of chart area -->
+    <div id="chart-zoom-btns" style="display:none;position:absolute;top:8px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:5;">
+      <button onclick="CCHART.stepZoom(-1)" title="Zoom In"
+        style="width:28px;height:28px;background:#1c2128;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.85;"
+        onmouseover="this.style.opacity=1;this.style.borderColor='#58a6ff'"
+        onmouseout="this.style.opacity=0.85;this.style.borderColor='#30363d'">＋</button>
+      <button onclick="CCHART.stepZoom(1)" title="Zoom Out"
+        style="width:28px;height:28px;background:#1c2128;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.85;"
+        onmouseover="this.style.opacity=1;this.style.borderColor='#58a6ff'"
+        onmouseout="this.style.opacity=0.85;this.style.borderColor='#30363d'">－</button>
+      <button onclick="CCHART.resetZoom()" title="Reset Zoom"
+        style="width:28px;height:28px;background:#1c2128;border:1px solid #30363d;border-radius:5px;color:#58a6ff;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0.85;"
+        onmouseover="this.style.opacity=1;this.style.borderColor='#58a6ff'"
+        onmouseout="this.style.opacity=0.85;this.style.borderColor='#30363d'">⊡</button>
+    </div>
   </div>
 </div>
 
@@ -687,6 +702,7 @@ async function loadChart(){
     $('placeholder').style.display = 'none';
     $('chart-canvas').style.display = 'block';
     $('chart-zoom-hint').style.display = 'block';
+    $('chart-zoom-btns').style.display = 'flex';
     CCHART.load(json.data || [], getTicker());
     setStatus(`✓ ${getTicker()} — ${(json.data||[]).length} bars`,'#26a641');
   } catch(e){ setStatus('Chart error: '+e.message,'#f85149'); }
@@ -764,6 +780,24 @@ const CCHART = {
 
   resetZoom(){
     this.zoomStart=0; this.zoomEnd=0; this.draw();
+  },
+
+  // ── stepZoom: dir=-1 zoom in 25%, dir=+1 zoom out 25%, centered on canvas mid ──
+  stepZoom(dir){
+    if(!this.candles.length) return;
+    const total=this.candles.length;
+    const cv=this.cv(), PL=68, PR=62;
+    const mouseX=cv.width/2;
+    const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=zE-zS;
+    const factor=dir<0?0.75:1.33;
+    const newLen=Math.round(Math.max(10, Math.min(total, zLen*factor)));
+    const chartW=cv.width-PL-PR;
+    const frac=Math.max(0,Math.min(1,(mouseX-PL)/chartW));
+    const anchor=Math.round(zS+frac*zLen);
+    let ns=Math.round(anchor-frac*newLen), ne=ns+newLen;
+    if(ns<0){ns=0;ne=newLen;}
+    if(ne>total){ne=total;ns=Math.max(0,total-newLen);}
+    this.zoomStart=ns; this.zoomEnd=ne; this.draw();
   },
 
   // ── main draw ────────────────────────────────────────────
@@ -1417,23 +1451,9 @@ const EVOL = {
       const xc=toX(zS+wi), cv=c.combined_volume??0, yp=toY(cv);
 
       if(c.vol_buy_signal){
-        // horizontal dotted threshold at cv - 20%|cv|
-        const thresh=cv-Math.abs(cv)*0.20;
-        const thY=toY(thresh);
-        if(thY>=PT-2 && thY<=PT+chartH+2){
-          ctx.save();
-          ctx.strokeStyle='rgba(38,166,65,0.75)'; ctx.lineWidth=1.1; ctx.setLineDash([5,4]);
-          ctx.beginPath(); ctx.moveTo(PL,thY); ctx.lineTo(W-PR,thY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(38,166,65,0.8)'; ctx.font='bold 8px Segoe UI,sans-serif';
-          ctx.textAlign='left';
-          const lv=Math.abs(thresh)>=1000?(thresh/1000).toFixed(1)+'k':thresh.toFixed(0);
-          ctx.fillText(lv, W-PR+3, thY+3);
-          ctx.restore();
-        }
-        // vertical dotted bar line
+        // vertical line at marker bar index
         ctx.save();
-        ctx.strokeStyle='rgba(38,166,65,0.25)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
+        ctx.strokeStyle='rgba(38,166,65,0.35)'; ctx.lineWidth=1.2; ctx.setLineDash([3,3]);
         ctx.beginPath(); ctx.moveTo(xc,PT); ctx.lineTo(xc,PT+chartH); ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
@@ -1447,23 +1467,9 @@ const EVOL = {
       }
 
       if(c.vol_sell_signal){
-        // horizontal dotted threshold at cv + 20%|cv|
-        const thresh=cv+Math.abs(cv)*0.20;
-        const thY=toY(thresh);
-        if(thY>=PT-2 && thY<=PT+chartH+2){
-          ctx.save();
-          ctx.strokeStyle='rgba(248,81,73,0.75)'; ctx.lineWidth=1.1; ctx.setLineDash([5,4]);
-          ctx.beginPath(); ctx.moveTo(PL,thY); ctx.lineTo(W-PR,thY); ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle='rgba(248,81,73,0.8)'; ctx.font='bold 8px Segoe UI,sans-serif';
-          ctx.textAlign='left';
-          const lv=Math.abs(thresh)>=1000?(thresh/1000).toFixed(1)+'k':thresh.toFixed(0);
-          ctx.fillText(lv, W-PR+3, thY+3);
-          ctx.restore();
-        }
-        // vertical dotted bar line
+        // vertical line at marker bar index
         ctx.save();
-        ctx.strokeStyle='rgba(248,81,73,0.25)'; ctx.lineWidth=0.8; ctx.setLineDash([2,3]);
+        ctx.strokeStyle='rgba(248,81,73,0.35)'; ctx.lineWidth=1.2; ctx.setLineDash([3,3]);
         ctx.beginPath(); ctx.moveTo(xc,PT); ctx.lineTo(xc,PT+chartH); ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
