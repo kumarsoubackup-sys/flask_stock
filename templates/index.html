@@ -400,8 +400,14 @@
     <span id="evol-status" style="margin-left:auto;font-size:11px;color:#8b949e;"></span>
   </div>
 
-  <div id="evol-body" style="flex:1;position:relative;overflow:hidden;min-height:0;">
+  <!-- Top: Excess Combined Volume chart (~60% height) -->
+  <div id="evol-body" style="flex:6;position:relative;overflow:hidden;min-height:0;border-bottom:1px solid #21262d;">
     <canvas id="evol-canvas" style="display:block;width:100%;height:100%;cursor:crosshair;"></canvas>
+  </div>
+
+  <!-- Bottom: Donchian Trend Ribbon chart (~40% height) -->
+  <div id="evol-don-body" style="flex:4;position:relative;overflow:hidden;min-height:0;">
+    <canvas id="evol-don-canvas" style="display:block;width:100%;height:100%;cursor:crosshair;"></canvas>
   </div>
 
 </div>
@@ -550,6 +556,8 @@ function switchTab(name) {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         EVOL.resize();
         EVOL.draw();
+        DON_CHART.resize();
+        DON_CHART.draw();
       }));
     }
   }
@@ -794,9 +802,7 @@ const CCHART = {
     ctx.fillText('PRICE & VWAP', PL+4, pT+11);
     ctx.fillText('EXCESS VOL',   PL+4, vT+11);
     ctx.fillText('VWAP DEV %',   PL+4, dT+11);
-    ctx.fillText('DONCHIAN',     PL+4, rT+11);
-
-    // ── zoom window ──────────────────────────────────────────
+    ctx.fillText('ATTENTION',    PL+4, rT+11);
     const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=Math.max(1,zE-zS);
     const slotW=chartW/zLen;
     const candleW=Math.max(1.5,slotW*0.72);
@@ -1007,52 +1013,72 @@ const CCHART = {
 
 
     // ═══════════════════════════════════════════════════════
-    // PANEL 4 — DONCHIAN TREND RIBBON  (Pine Script port)
-    // 5 ribbons: offset 5 (bottom) → offset 9 (top)
-    // maintrend +1: sub=+1 → bright #00ff00, else faded
-    // maintrend -1: sub=-1 → bright #ff3030, else faded
+    // PANEL 4 — MULTI-HEAD ATTENTION OUTPUT
+    // 3 heads: price momentum, volume, hi-lo range
+    // Cyan fill for positive (bullish), red-orange for negative (bearish)
     // ═══════════════════════════════════════════════════════
     {
-      const rbH=rH/5;                          // height of each of 5 ribbon rows
-      // ribbon order: offset 5 at bottom (row 4), offset 9 at top (row 0)
-      const offs=[9,8,7,6,5];
+      const attnVals = win.map(c => c.attn_out ?? null);
+      const validA   = attnVals.filter(v => v != null);
+      if(validA.length > 1){
+        const aAbs = Math.max(...validA.map(Math.abs), 1e-8);
+        const aMin = -aAbs * 1.2, aMax = aAbs * 1.2;
+        const toAY = v => rT + (1 - (v - aMin) / (aMax - aMin)) * rH;
+        const aZ   = toAY(0);
 
-      win.forEach((c,wi)=>{
-        const xc=toX(zS+wi), x0=xc-hw, bw=Math.max(1,candleW);
-        const mt=c.don_main??0;
-        offs.forEach((off,ri)=>{
-          const st=c['don_sub_'+off]??0;
-          let col;
-          if(mt===1)       col=st===1?'#00ff00':'rgba(0,200,0,0.22)';
-          else if(mt===-1) col=st===-1?'#ff3030':'rgba(255,48,48,0.22)';
-          else             col='rgba(100,100,100,0.18)';
-          ctx.fillStyle=col;
-          ctx.fillRect(x0, rT+ri*rbH, bw, rbH+0.5);
+        // zero baseline
+        ctx.strokeStyle='rgba(139,148,158,0.5)'; ctx.lineWidth=0.7;
+        ctx.beginPath(); ctx.moveTo(PL,aZ); ctx.lineTo(W-PR,aZ); ctx.stroke();
+
+        // fill positive / negative regions
+        win.forEach((c,wi) => {
+          const v = c.attn_out ?? 0;
+          const x0 = toX(zS+wi) - hw, bw = Math.max(1, candleW);
+          const yTop = toAY(Math.max(v, 0)), yBot = toAY(Math.min(v, 0));
+          ctx.fillStyle = v >= 0 ? 'rgba(0,229,255,0.18)' : 'rgba(255,123,114,0.18)';
+          ctx.fillRect(x0, yTop, bw, Math.max(1, yBot - yTop));
         });
-      });
 
-      // flip markers at ribbon edges
-      win.forEach((c,wi)=>{
-        const xc=toX(zS+wi);
-        if(c.don_r2g){ _drawMarker(ctx,xc,rT+rH-7,'▲','#00ff00',9,'bold'); }
-        if(c.don_g2r){ _drawMarker(ctx,xc,rT+7,   '▼','#ff3030',9,'bold'); }
-      });
+        // attention line
+        ctx.beginPath(); ctx.strokeStyle='#d2a8ff'; ctx.lineWidth=1.5;
+        let as = false;
+        win.forEach((c,wi) => {
+          const v = c.attn_out;
+          if(v == null) return;
+          const xp = toX(zS+wi), yp = toAY(v);
+          as ? ctx.lineTo(xp, yp) : (ctx.moveTo(xp, yp), as = true);
+        });
+        ctx.stroke();
 
-      // current-state label on right axis
-      const lc=win[win.length-1];
-      if(lc){
-        const ag=lc.all_green,ar=lc.all_red,mt=lc.don_main??0;
-        const sc=ag?'#00ff00':ar?'#ff3030':'#8b949e';
-        const st=ag?'ALL GREEN':ar?'ALL RED':mt===1?'BULL':mt===-1?'BEAR':'FLAT';
-        ctx.fillStyle=sc; ctx.font='bold 8px Segoe UI,sans-serif'; ctx.textAlign='left';
-        ctx.fillText(st, W-PR+3, rT+rH/2+3);
+        // buy/sell signal dots on attention panel
+        win.forEach((c,wi) => {
+          const v = c.attn_out ?? null; if(v == null) return;
+          const xc = toX(zS+wi), yc = toAY(v);
+          if(c.vol_buy_signal)  _drawMarker(ctx, xc, yc-8, '▲', '#26a641', 8, 'bold');
+          if(c.vol_sell_signal) _drawMarker(ctx, xc, yc+8, '▼', '#f85149', 8, 'bold');
+        });
+
+        // Y-axis labels
+        ctx.fillStyle='#556070'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='right';
+        [aMax * 0.6, 0, aMin * 0.6].forEach(v => {
+          const yp = toAY(v);
+          if(yp < rT || yp > rT + rH) return;
+          const lb = v === 0 ? '0' : (Math.abs(v) < 0.001 ? v.toExponential(1) : v.toFixed(4));
+          ctx.fillText(lb, PL-3, yp+3);
+        });
+
+        // current value label on right
+        const lastA = win[win.length-1]?.attn_out;
+        if(lastA != null){
+          ctx.fillStyle = lastA >= 0 ? '#00e5ff' : '#ff7b72';
+          ctx.font = 'bold 8px Segoe UI,sans-serif'; ctx.textAlign='left';
+          ctx.fillText(lastA.toFixed(5), W-PR+3, rT+rH/2+3);
+        }
+      } else {
+        ctx.fillStyle='#556070'; ctx.font='9px Segoe UI,sans-serif'; ctx.textAlign='center';
+        ctx.fillText('Attention not available (need 60+ bars)', W/2, rT+rH/2);
+        ctx.textAlign='left';
       }
-
-      // y-axis sub-trend labels
-      ctx.fillStyle='#445060'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='right';
-      ['d9','d8','d7','d6','d5'].forEach((lbl,ri)=>{
-        ctx.fillText(lbl, PL-3, rT+ri*rbH+rbH*0.65);
-      });
     }
 
     // ── Time axis ────────────────────────────────────────────
@@ -1069,6 +1095,7 @@ const CCHART = {
       {col:'#f85149',lw:1,ls:[3,4],lbl:'ORB 100%'},
       {mrk:'▲',col:'#26a641',lbl:'Vol Buy (cross↑ ≥+25%)'},
       {mrk:'▼',col:'#f85149',lbl:'Vol Sell (cross↓ ≤-25%)'},
+      {col:'#d2a8ff',lw:1.5,ls:null,lbl:'Attention (3-head)'},
 
 
     ];
@@ -1259,6 +1286,8 @@ const EVOL = {
     // reset Y zoom when X changes so auto-scaling re-applies
     this.yMin=null; this.yMax=null;
     this.draw();
+    if(typeof DON_CHART!=='undefined' && DON_CHART.candles.length)
+      DON_CHART.syncZoom(this.zoomStart, this.zoomEnd||this.candles.length);
   },
 
   wheelYZoom(deltaY, mouseY){
@@ -1301,6 +1330,8 @@ const EVOL = {
     this.zoomStart=0; this.zoomEnd=0;
     this.yMin=null; this.yMax=null;
     this.draw();
+    if(typeof DON_CHART!=='undefined' && DON_CHART.candles.length)
+      DON_CHART.syncZoom(0, 0);
   },
 
   // ── main draw ────────────────────────────────────────────
@@ -1615,6 +1646,8 @@ const EVOL = {
       EVOL.yMin=d.startYMin+dVal;
       EVOL.yMax=d.startYMax+dVal;
       EVOL.draw();
+      if(typeof DON_CHART!=='undefined' && DON_CHART.candles.length)
+        DON_CHART.syncZoom(EVOL.zoomStart, EVOL.zoomEnd||EVOL.candles.length);
     } else {
       EVOL.onHover(mx,my);
     }
@@ -1643,12 +1676,142 @@ async function evolLoad(){
     if(json.error) throw new Error(json.error);
     $('evol-status').textContent='';
     EVOL.load(json.data||[], getTicker());
+    DON_CHART.load(json.data||[], getTicker());
     btn.textContent='✓ '+(getTicker().replace('.NS',''))+' — '+(json.data||[]).length+' bars';
   } catch(e){
     $('evol-status').textContent='✗ '+e.message;
     btn.textContent='📥 Load Data';
   } finally { btn.disabled=false; }
 }
+
+// ════════════════════════════════════════════════════════════
+// DON_CHART — Donchian Trend Ribbon in Excess Vol tab (bottom panel)
+// ════════════════════════════════════════════════════════════
+const DON_CHART = {
+  candles   : [],
+  _ticker   : '',
+  zoomStart : 0,
+  zoomEnd   : 0,
+
+  PL : 72, PR : 64, PT : 22, PB : 24,
+
+  cv () { return document.getElementById('evol-don-canvas'); },
+  ctx() { return this.cv().getContext('2d'); },
+
+  resize(){
+    const cv=this.cv(), body=document.getElementById('evol-don-body');
+    const w=body.clientWidth, h=body.clientHeight;
+    if(w>0&&h>0){ cv.width=w; cv.height=h; }
+  },
+
+  load(candles, ticker){
+    this.candles   = candles;
+    this._ticker   = (ticker||'').replace('.NS','');
+    this.zoomStart = 0; this.zoomEnd = 0;
+    this.resize(); this.draw();
+  },
+
+  draw(){
+    const cv=this.cv(), ctx=this.ctx();
+    const W=cv.width, H=cv.height;
+    if(!W||!H) return;
+    const {PL,PR,PT,PB}=this;
+    const chartW=W-PL-PR, chartH=H-PT-PB;
+
+    ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,H);
+
+    const candles=this.candles, total=candles.length;
+    if(!total){
+      ctx.fillStyle='#8b949e'; ctx.font='11px Segoe UI,sans-serif'; ctx.textAlign='center';
+      ctx.fillText('📥 Load Data to see Donchian Ribbon',W/2,H/2);
+      ctx.textAlign='left'; return;
+    }
+
+    const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=Math.max(1,zE-zS);
+    const slotW=chartW/zLen;
+    const candleW=Math.max(1.5,slotW*0.72), hw=candleW/2;
+    const toX=i=>PL+(i-zS+0.5)*slotW;
+    const win=candles.slice(zS,zE);
+
+    // section label
+    ctx.fillStyle='#556070'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='left';
+    ctx.fillText('DONCHIAN TREND RIBBON', PL+4, PT+11);
+
+    // 5 ribbon rows
+    const rbH=chartH/5;
+    const offs=[9,8,7,6,5];
+    win.forEach((c,wi)=>{
+      const xc=toX(zS+wi), x0=xc-hw, bw=Math.max(1,candleW);
+      const mt=c.don_main??0;
+      offs.forEach((off,ri)=>{
+        const st=c['don_sub_'+off]??0;
+        let col;
+        if(mt===1)       col=st===1?'#00ff00':'rgba(0,200,0,0.22)';
+        else if(mt===-1) col=st===-1?'#ff3030':'rgba(255,48,48,0.22)';
+        else             col='rgba(100,100,100,0.18)';
+        ctx.fillStyle=col;
+        ctx.fillRect(x0, PT+ri*rbH, bw, rbH+0.5);
+      });
+    });
+
+    // flip markers
+    win.forEach((c,wi)=>{
+      const xc=toX(zS+wi);
+      if(c.don_r2g){ _drawMarker(ctx,xc,PT+chartH-8,'▲','#00ff00',9,'bold'); }
+      if(c.don_g2r){ _drawMarker(ctx,xc,PT+8,       '▼','#ff3030',9,'bold'); }
+    });
+
+    // current state label
+    const lc=win[win.length-1];
+    if(lc){
+      const ag=lc.all_green,ar=lc.all_red,mt=lc.don_main??0;
+      const sc=ag?'#00ff00':ar?'#ff3030':'#8b949e';
+      const st=ag?'ALL GREEN':ar?'ALL RED':mt===1?'BULL':mt===-1?'BEAR':'FLAT';
+      ctx.fillStyle=sc; ctx.font='bold 8px Segoe UI,sans-serif'; ctx.textAlign='left';
+      ctx.fillText(st, W-PR+3, PT+chartH/2+3);
+    }
+
+    // y-axis row labels
+    ctx.fillStyle='#445060'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='right';
+    ['d9','d8','d7','d6','d5'].forEach((lbl,ri)=>{
+      ctx.fillText(lbl, PL-3, PT+ri*rbH+rbH*0.65);
+    });
+
+    // border
+    ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
+    ctx.strokeRect(PL,PT,chartW,chartH);
+
+    // time axis (sync with EVOL - same bars)
+    const MARKS=['09:15','09:30','10:00','10:30','11:00','11:30',
+                 '12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30'];
+    ctx.font='8px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='center';
+    MARKS.forEach(t=>{
+      const idx=candles.findIndex(c=>c.date.slice(11,16)===t);
+      if(idx<0||(idx<zS||idx>=zE)) return;
+      const xp=toX(idx);
+      if(xp<PL||xp>W-PR) return;
+      ctx.strokeStyle='#21262d'; ctx.lineWidth=0.5; ctx.setLineDash([2,3]);
+      ctx.beginPath(); ctx.moveTo(xp,PT); ctx.lineTo(xp,PT+chartH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillText(t,xp,PT+chartH+14);
+    });
+    ctx.textAlign='left';
+  },
+
+  // sync zoom with EVOL
+  syncZoom(zS, zE){
+    this.zoomStart=zS; this.zoomEnd=zE; this.draw();
+  },
+};
+
+// ── Resize DON_CHART when tab becomes active ──────────────
+(function(){
+  window.addEventListener('resize',()=>{
+    if(document.getElementById('evol-panel').classList.contains('active')){
+      DON_CHART.resize(); DON_CHART.draw();
+    }
+  });
+})();
 
 // ════════════════════════════════════════════════════════════
 // SCANNER TAB
