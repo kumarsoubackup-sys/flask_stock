@@ -2961,8 +2961,32 @@ $('rpl-progress-wrap').addEventListener('click', e => {
 // ── Wheel: zoom in/out centered on mouse position ─────────────────────────────
 $('rpl-canvas').addEventListener('wheel', e => {
   e.preventDefault();
+  if (!RPL.candles.length) return;
   const rect = $('rpl-canvas').getBoundingClientRect();
-  RPL.wheelZoom(e.deltaY, e.clientX - rect.left);
+
+  if (e.ctrlKey) {
+    // Ctrl+scroll → zoom centered on mouse
+    RPL.wheelZoom(e.deltaY, e.clientX - rect.left);
+  } else {
+    // Scroll → pan left/right
+    const PL=68, PR=62;
+    const vis   = RPL.cursor || RPL.candles.length;
+    const zS    = RPL.zoomStart;
+    const zE    = RPL.zoomEnd || vis;
+    const zLen  = zE - zS;
+    const chartW = RPL.cv().width - PL - PR;
+    const slotW  = chartW / Math.max(1, zLen);
+    // pan ~3 bars per notch; deltaY positive = scroll down = pan right (forward in time)
+    const step = Math.max(1, Math.round(Math.abs(e.deltaY) / slotW * 0.25 + 1.5));
+    const dir  = e.deltaY > 0 ? 1 : -1;
+    let ns = zS + dir * step;
+    let ne = zE + dir * step;
+    if (ns < 0)   { ns = 0;   ne = zLen; }
+    if (ne > vis) { ne = vis; ns = Math.max(0, vis - zLen); }
+    RPL.zoomStart = ns;
+    RPL.zoomEnd   = ne;
+    RPL.draw();
+  }
 }, { passive: false });
 
 // ── Drag to pan ───────────────────────────────────────────────────────────────
