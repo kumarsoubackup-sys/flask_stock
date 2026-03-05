@@ -452,6 +452,14 @@
     <button class="rpl-btn" id="rpl-stop-btn"  onclick="rplStop()"      disabled>⏹ Stop</button>
     <button class="rpl-btn" id="rpl-reset-btn" onclick="rplReset()"     disabled>⏮ Reset</button>
     <button class="rpl-btn" id="rpl-zoom-btn"  onclick="RPL.resetZoom()" style="background:#21262d;color:#c9d1d9;">🔍 Full</button>
+    <button onclick="RPL.stepZoom(-1)" title="Zoom In"
+      style="width:28px;height:26px;background:#1c2128;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:15px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;opacity:0.85;vertical-align:middle;"
+      onmouseover="this.style.opacity=1;this.style.borderColor='#58a6ff'"
+      onmouseout="this.style.opacity=0.85;this.style.borderColor='#30363d'">＋</button>
+    <button onclick="RPL.stepZoom(1)" title="Zoom Out"
+      style="width:28px;height:26px;background:#1c2128;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:15px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;opacity:0.85;vertical-align:middle;"
+      onmouseover="this.style.opacity=1;this.style.borderColor='#58a6ff'"
+      onmouseout="this.style.opacity=0.85;this.style.borderColor='#30363d'">－</button>
     <label style="font-size:12px;color:#8b949e;">Speed</label>
     <select id="rpl-speed-sel">
       <option value="800">0.5×  slow</option>
@@ -2370,16 +2378,15 @@ const RPL = {
     // ── layout constants ────────────────────────────────────
     const PL=68, PR=62, PT=30, PB=28;
     const innerH = H - PT - PB;
-    const pH = Math.floor(innerH*0.50);   // Price & VWAP
+    const pH = Math.floor(innerH*0.55);   // Price & VWAP
     const vH = Math.floor(innerH*0.20);   // Excess Vol
-    const dH = Math.floor(innerH*0.13);   // VWAP Dev %
-    const rH = innerH - pH - vH - dH;     // Multi-Head Attention
-    const pT=PT, vT=PT+pH+1, dT=vT+vH+1, rT=dT+dH+1;
+    const rH = innerH - pH - vH;          // Multi-Head Attention
+    const pT=PT, vT=PT+pH+1, rT=vT+vH+1;
     const chartW=W-PL-PR;
 
     // ── panel border lines ───────────────────────────────────
     ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
-    [[0,vT-1,W,vT-1],[0,dT-1,W,dT-1],[0,rT-1,W,rT-1],[0,rT+rH+PB-1,W,rT+rH+PB-1]].forEach(([x1,y1,x2,y2])=>{
+    [[0,vT-1,W,vT-1],[0,rT-1,W,rT-1],[0,rT+rH+PB-1,W,rT+rH+PB-1]].forEach(([x1,y1,x2,y2])=>{
       ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
     });
 
@@ -2387,7 +2394,6 @@ const RPL = {
     ctx.fillStyle='#556070'; ctx.font='8px Segoe UI,sans-serif'; ctx.textAlign='left';
     ctx.fillText('PRICE & VWAP', PL+4, pT+11);
     ctx.fillText('EXCESS VOL',   PL+4, vT+11);
-    ctx.fillText('VWAP DEV %',   PL+4, dT+11);
     ctx.fillText('MULTI-HEAD',   PL+4, rT+11);
 
     // ── empty state ──────────────────────────────────────────
@@ -2550,8 +2556,13 @@ const RPL = {
       }
     });
 
-    // ── Legend (top-left of price panel, matching main chart) ─
-    this._legend(ctx, PL+4, pT+4);
+    // ── Legend (top-right of price panel) ────────────────────
+    {
+      const cols=2, itemW=110, itemH=13;
+      const nItems=12; // total legend items
+      const boxW=cols*itemW+8;
+      this._legend(ctx, W-PR-boxW-4, pT+4);
+    }
 
     // ── Title ────────────────────────────────────────────────
     ctx.fillStyle='#c9d1d9'; ctx.font='bold 11px Segoe UI,sans-serif'; ctx.textAlign='center';
@@ -2606,57 +2617,9 @@ const RPL = {
     });
     ctx.stroke();
 
-    // ════════════════════════════════════════════════════════
-    // PANEL 3 — VWAP DEV %
-    // ════════════════════════════════════════════════════════
-    const devVals=winVisible.map(c=>c.vwap_dev??null).filter(v=>v!=null);
-    let dAbsMax=Math.max(...devVals.map(Math.abs),0.1);
-    const dYMin=-dAbsMax*1.2, dYMax=dAbsMax*1.2;
-    const toDY=v=>dT+(1-(v-dYMin)/(dYMax-dYMin))*dH;
-    const dZero=toDY(0);
-
-    // dev grid
-    ctx.font='8px Segoe UI,sans-serif'; ctx.fillStyle='#8b949e'; ctx.textAlign='right';
-    [-1,-0.5,0,0.5,1].forEach(f=>{
-      const yv=dAbsMax*f, yp=toDY(yv);
-      if(yp<dT||yp>dT+dH)return;
-      ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.5;
-      ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
-      ctx.fillText(yv.toFixed(2)+'%',PL-3,yp+3);
-    });
-    ctx.textAlign='left';
-
-    // zero line
-    ctx.strokeStyle='#8b949e'; ctx.lineWidth=0.8;
-    ctx.beginPath(); ctx.moveTo(PL,dZero); ctx.lineTo(W-PR,dZero); ctx.stroke();
-
-    // fill
-    ctx.save();
-    const devBars=winVisible.map((c,wi)=>({c,i:zS+wi})).filter(({c})=>c.vwap_dev!=null);
-    if(devBars.length){
-      ctx.beginPath();
-      ctx.moveTo(toX(devBars[0].i),dZero);
-      devBars.forEach(({c,i})=>ctx.lineTo(toX(i),toDY(c.vwap_dev)));
-      ctx.lineTo(toX(devBars[devBars.length-1].i),dZero);
-      ctx.closePath(); ctx.clip();
-      ctx.fillStyle='rgba(38,166,65,0.40)';  ctx.fillRect(PL,dT,chartW,Math.max(0,dZero-dT));
-      ctx.fillStyle='rgba(248,81,73,0.40)';  ctx.fillRect(PL,dZero,chartW,dH);
-    }
-    ctx.restore();
-
-    // dev line
-    let dvS=false;
-    ctx.beginPath(); ctx.strokeStyle='#58a6ff'; ctx.lineWidth=1.2;
-    winVisible.forEach((c,wi)=>{
-      if(c.vwap_dev==null)return;
-      const xp=toX(zS+wi),yp=toDY(c.vwap_dev);
-      dvS?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),dvS=true);
-    });
-    ctx.stroke();
-
 
     // ════════════════════════════════════════════════════════════
-    // PANEL 4 — MULTI-HEAD ATTENTION (h1 momentum, h2 volume, h3 range)
+    // PANEL 3 — MULTI-HEAD ATTENTION (h1 momentum, h2 volume, h3 range)
     // ════════════════════════════════════════════════════════════
     {
       const h1Vals=winVisible.map(c=>c.attn_h1??null);
@@ -2929,6 +2892,23 @@ const RPL = {
   // reset zoom to full view
   resetZoom(){
     this.zoomStart=0; this.zoomEnd=0; this.draw();
+  },
+
+  stepZoom(dir){
+    const total=this.cursor||this.candles.length;
+    if(!total) return;
+    const cv=document.getElementById('rpl-canvas');
+    const PL=68,PR=62;
+    const zS=this.zoomStart, zE=this.zoomEnd||total, zLen=zE-zS;
+    const factor=dir<0?0.75:1.33;
+    const newLen=Math.round(Math.max(10,Math.min(total,zLen*factor)));
+    const chartW=cv.width-PL-PR;
+    const frac=0.5;
+    const anchor=Math.round(zS+frac*zLen);
+    let ns=Math.round(anchor-frac*newLen), ne=ns+newLen;
+    if(ns<0){ns=0;ne=newLen;}
+    if(ne>total){ne=total;ns=Math.max(0,total-newLen);}
+    this.zoomStart=ns; this.zoomEnd=ne; this.draw();
   },
 };
 
