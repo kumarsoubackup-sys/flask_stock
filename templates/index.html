@@ -2373,7 +2373,7 @@ const RPL = {
     const pH = Math.floor(innerH*0.50);   // Price & VWAP
     const vH = Math.floor(innerH*0.20);   // Excess Vol
     const dH = Math.floor(innerH*0.13);   // VWAP Dev %
-    const rH = innerH - pH - vH - dH;     // Donchian ribbon
+    const rH = innerH - pH - vH - dH;     // Multi-Head Attention
     const pT=PT, vT=PT+pH+1, dT=vT+vH+1, rT=dT+dH+1;
     const chartW=W-PL-PR;
 
@@ -2388,7 +2388,7 @@ const RPL = {
     ctx.fillText('PRICE & VWAP', PL+4, pT+11);
     ctx.fillText('EXCESS VOL',   PL+4, vT+11);
     ctx.fillText('VWAP DEV %',   PL+4, dT+11);
-    ctx.fillText('DONCHIAN',     PL+4, rT+11);
+    ctx.fillText('MULTI-HEAD',   PL+4, rT+11);
 
     // ── empty state ──────────────────────────────────────────
     if(!visible.length){
@@ -2656,53 +2656,115 @@ const RPL = {
 
 
     // ════════════════════════════════════════════════════════════
-    // PANEL 4 — DONCHIAN TREND RIBBON  (Pine Script port)
-    // 5 rows top→bottom: offset 9 (top) … offset 5 (bottom)
-    // maintrend +1: sub=+1 → bright #00ff00, faded otherwise
-    // maintrend −1: sub=−1 → bright #ff3030, faded otherwise
+    // PANEL 4 — MULTI-HEAD ATTENTION (h1 momentum, h2 volume, h3 range)
     // ════════════════════════════════════════════════════════════
     {
-      const rbH = rH / 5;
-      const offs = [9,8,7,6,5];   // row 0=top(offset9), row 4=bottom(offset5)
+      const h1Vals=winVisible.map(c=>c.attn_h1??null);
+      const h2Vals=winVisible.map(c=>c.attn_h2??null);
+      const h3Vals=winVisible.map(c=>c.attn_h3??null);
+      const avgVals=winVisible.map(c=>c.attn_out??null);
+      const allH=[...h1Vals,...h2Vals,...h3Vals].filter(v=>v!=null);
 
-      winVisible.forEach((c,wi)=>{
-        const i   = zS+wi;
-        const xc  = toX(i), x0=xc-hw, bw=Math.max(1,candleW);
-        const mt  = c.don_main??0;
-        offs.forEach((off,ri)=>{
-          const st = c['don_sub_'+off]??0;
-          let col;
-          if     (mt===1)  col = st===1  ? '#00ff00' : 'rgba(0,200,0,0.18)';
-          else if(mt===-1) col = st===-1 ? '#ff3030' : 'rgba(255,48,48,0.18)';
-          else             col = 'rgba(100,100,100,0.15)';
-          ctx.fillStyle=col;
-          ctx.fillRect(x0, rT+ri*rbH, bw, rbH+0.5);
+      if(allH.length>1){
+        const hAbs=Math.max(...allH.map(Math.abs),1e-8);
+        const hMin=-hAbs*1.2, hMax=hAbs*1.2;
+        const toMY=v=>rT+(1-(v-hMin)/(hMax-hMin))*rH;
+        const mZ=toMY(0);
+
+        // zero baseline
+        ctx.strokeStyle='rgba(139,148,158,0.4)'; ctx.lineWidth=0.6;
+        ctx.beginPath(); ctx.moveTo(PL,mZ); ctx.lineTo(W-PR,mZ); ctx.stroke();
+
+        // Y grid + labels
+        ctx.font='7px Segoe UI,sans-serif'; ctx.fillStyle='#445060'; ctx.textAlign='right';
+        [hMax*0.6,0,hMin*0.6].forEach(v=>{
+          const yp=toMY(v);
+          if(yp<rT||yp>rT+rH) return;
+          ctx.strokeStyle='#1c2128'; ctx.lineWidth=0.4;
+          ctx.beginPath(); ctx.moveTo(PL,yp); ctx.lineTo(W-PR,yp); ctx.stroke();
+          const lb=v===0?'0':(Math.abs(v)<0.001?v.toExponential(1):v.toFixed(4));
+          ctx.fillText(lb,PL-3,yp+3);
         });
-      });
+        ctx.textAlign='left';
 
-      // Flip markers at ribbon edges
-      winVisible.forEach((c,wi)=>{
-        const i=zS+wi, xc=toX(i);
-        if(c.don_r2g){ _drawMarker(ctx,xc,rT+rH-7,'▲','#00ff00',9,'bold'); }
-        if(c.don_g2r){ _drawMarker(ctx,xc,rT+7,   '▼','#ff3030',9,'bold'); }
-      });
+        // avg attention fill (cyan/red bars)
+        winVisible.forEach((c,wi)=>{
+          const v=c.attn_out??null; if(v==null) return;
+          const x0=toX(zS+wi)-hw, bw=Math.max(1,candleW);
+          const yTop=toMY(Math.max(v,0)), yBot=toMY(Math.min(v,0));
+          ctx.fillStyle=v>=0?'rgba(0,229,255,0.12)':'rgba(255,123,114,0.12)';
+          ctx.fillRect(x0,yTop,bw,Math.max(1,yBot-yTop));
+        });
 
-      // Right-axis state label
-      const lc = winVisible[winVisible.length-1];
-      if(lc){
-        const ag=lc.all_green, ar=lc.all_red, mt=lc.don_main??0;
-        const sc = ag?'#00ff00':ar?'#ff3030':'#8b949e';
-        const st = ag?'ALL GREEN':ar?'ALL RED':mt===1?'BULL':mt===-1?'BEAR':'FLAT';
-        ctx.fillStyle=sc; ctx.font='bold 8px Segoe UI,sans-serif'; ctx.textAlign='left';
-        ctx.fillText(st, W-PR+3, rT+rH/2+3);
+        // draw head lines
+        const drawHead=(vals,col,dash,lw=1.5)=>{
+          let started=false;
+          ctx.beginPath(); ctx.strokeStyle=col; ctx.lineWidth=lw;
+          if(dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
+          vals.forEach((v,wi)=>{
+            if(v==null) return;
+            const xp=toX(zS+wi),yp=toMY(v);
+            started?ctx.lineTo(xp,yp):(ctx.moveTo(xp,yp),started=true);
+          });
+          ctx.stroke(); ctx.setLineDash([]);
+        };
+
+        // avg attention line (purple, slightly heavier)
+        drawHead(avgVals,'#d2a8ff',null,1.8);
+        // H1 momentum (amber)
+        drawHead(h1Vals,'#ffa657',null,1.2);
+        // H2 volume (blue dashed)
+        drawHead(h2Vals,'#58a6ff',[4,3],1.2);
+        // H3 hi-lo range (green short-dash)
+        drawHead(h3Vals,'#3fb950',[2,4],1.2);
+
+        // buy/sell signal markers on this panel
+        winVisible.forEach((c,wi)=>{
+          const v=c.attn_out??null; if(v==null) return;
+          const xc=toX(zS+wi), yc=toMY(v);
+          if(c.vol_buy_signal)  _drawMarker(ctx,xc,yc-9,'▲','#26a641',9,'bold');
+          if(c.vol_sell_signal) _drawMarker(ctx,xc,yc+9,'▼','#f85149',9,'bold');
+        });
+
+        // inline legend
+        const lx=PL+8, ly=rT+6;
+        const legItems=[
+          {col:'#d2a8ff',lbl:'Avg',  dash:null,  lw:1.8},
+          {col:'#ffa657',lbl:'H1 Momentum',dash:null,  lw:1.2},
+          {col:'#58a6ff',lbl:'H2 Volume',  dash:[4,3], lw:1.2},
+          {col:'#3fb950',lbl:'H3 Range',   dash:[2,4], lw:1.2},
+        ];
+        ctx.fillStyle='rgba(22,27,34,0.85)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.7;
+        ctx.fillRect(lx-3,ly-3,legItems.length*72+6,14);
+        ctx.strokeRect(lx-3,ly-3,legItems.length*72+6,14);
+        legItems.forEach((it,idx)=>{
+          const ix=lx+idx*72;
+          ctx.save(); ctx.strokeStyle=it.col; ctx.lineWidth=it.lw;
+          if(it.dash) ctx.setLineDash(it.dash); else ctx.setLineDash([]);
+          ctx.beginPath(); ctx.moveTo(ix,ly+4); ctx.lineTo(ix+10,ly+4); ctx.stroke();
+          ctx.setLineDash([]); ctx.restore();
+          ctx.fillStyle='#c9d1d9'; ctx.font='7px Segoe UI,sans-serif';
+          ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+          ctx.fillText(it.lbl,ix+13,ly+8);
+        });
+        ctx.textBaseline='alphabetic';
+
+        // current values on right axis
+        [{v:winVisible[winVisible.length-1]?.attn_out, col:'#d2a8ff',label:'Avg'},
+         {v:winVisible[winVisible.length-1]?.attn_h1,  col:'#ffa657',label:'H1'},
+         {v:winVisible[winVisible.length-1]?.attn_h2,  col:'#58a6ff',label:'H2'},
+         {v:winVisible[winVisible.length-1]?.attn_h3,  col:'#3fb950',label:'H3'}]
+        .forEach(({v,col,label},i)=>{
+          if(v==null) return;
+          ctx.fillStyle=col; ctx.font='bold 7px Segoe UI,sans-serif'; ctx.textAlign='left';
+          ctx.fillText(`${label}: ${v.toFixed(4)}`, W-PR+3, rT+8+i*11);
+        });
+
+      } else {
+        ctx.fillStyle='#556070'; ctx.font='9px Segoe UI,sans-serif'; ctx.textAlign='center';
+        ctx.fillText('Multi-head attention not available (need 60+ bars)',W/2,rT+rH/2);
         ctx.textAlign='left';
       }
-
-      // Left y-axis labels (d9 top → d5 bottom)
-      ctx.fillStyle='#445060'; ctx.font='7px Segoe UI,sans-serif'; ctx.textAlign='right';
-      ['d9','d8','d7','d6','d5'].forEach((lbl,ri)=>{
-        ctx.fillText(lbl, PL-3, rT+ri*rbH+rbH*0.65);
-      });
     }
 
     // ════════════════════════════════════════════════════════
@@ -2744,6 +2806,10 @@ const RPL = {
       {mrk:'▼', col:'#f85149', lbl:'Vol Sell (cross↓ ≤-25%)'},
 
       {mrk:'◆', col:'#ff00ff', lbl:'Vol Surge'},
+      {col:'#d2a8ff', lw:1.8, ls:null,  lbl:'Attn Avg'},
+      {col:'#ffa657', lw:1.2, ls:null,  lbl:'H1 Momentum'},
+      {col:'#58a6ff', lw:1.2, ls:[4,3], lbl:'H2 Volume'},
+      {col:'#3fb950', lw:1.2, ls:[2,4], lbl:'H3 Range'},
     ];
     const cols=2, rows=Math.ceil(items.length/cols);
     const itemW=110, itemH=13;
