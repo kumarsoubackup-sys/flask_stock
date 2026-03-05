@@ -2556,14 +2556,6 @@ const RPL = {
       }
     });
 
-    // ── Legend (top-right of price panel) ────────────────────
-    {
-      const cols=2, itemW=110, itemH=13;
-      const nItems=12; // total legend items
-      const boxW=cols*itemW+8;
-      this._legend(ctx, W-PR-boxW-4, pT+4);
-    }
-
     // ── Title ────────────────────────────────────────────────
     ctx.fillStyle='#c9d1d9'; ctx.font='bold 11px Segoe UI,sans-serif'; ctx.textAlign='center';
     const dateStr=visible[0].date.slice(0,10).split('-').reverse().join(' ').replace(/(\d+) (\d+) (\d+)/,(_,d,m,y)=>{
